@@ -91,6 +91,12 @@ enum ath6kl_fw_capability {
 	 */
 	ATH6KL_FW_CAPABILITY_STA_P2PDEV_DUPLEX,
 
+	/*
+	 * Firmware has support to cleanup inactive stations
+	 * in AP mode.
+	 */
+	ATH6KL_FW_CAPABILITY_INACTIVITY_TIMEOUT,
+
 	/* this needs to be last */
 	ATH6KL_FW_CAPABILITY_MAX,
 };
@@ -456,6 +462,11 @@ enum ath6kl_hif_type {
 	ATH6KL_HIF_TYPE_USB,
 };
 
+enum ath6kl_htc_type {
+	ATH6KL_HTC_TYPE_MBOX,
+	ATH6KL_HTC_TYPE_PIPE,
+};
+
 /* Max number of filters that hw supports */
 #define ATH6K_MAX_MC_FILTERS_PER_LIST 7
 struct ath6kl_mc_filter {
@@ -570,6 +581,7 @@ struct ath6kl {
 
 	struct ath6kl_bmi bmi;
 	const struct ath6kl_hif_ops *hif_ops;
+	const struct ath6kl_htc_ops *htc_ops;
 	struct wmi *wmi;
 	int tx_pending[ENDPOINT_MAX];
 	int total_tx_data_pend;
@@ -748,7 +760,8 @@ void init_netdev(struct net_device *dev);
 void ath6kl_cookie_init(struct ath6kl *ar);
 void ath6kl_cookie_cleanup(struct ath6kl *ar);
 void ath6kl_rx(struct htc_target *target, struct htc_packet *packet);
-void ath6kl_tx_complete(void *context, struct list_head *packet_queue);
+void ath6kl_tx_complete(struct htc_target *context,
+			struct list_head *packet_queue);
 enum htc_send_full_action ath6kl_tx_queue_full(struct htc_target *target,
 					       struct htc_packet *packet);
 void ath6kl_stop_txrx(struct ath6kl *ar);
@@ -823,8 +836,11 @@ int ath6kl_init_hw_params(struct ath6kl *ar);
 
 void ath6kl_check_wow_status(struct ath6kl *ar);
 
+void ath6kl_core_tx_complete(struct ath6kl *ar, struct sk_buff *skb);
+void ath6kl_core_rx_complete(struct ath6kl *ar, struct sk_buff *skb, u8 pipe);
+
 struct ath6kl *ath6kl_core_create(struct device *dev);
-int ath6kl_core_init(struct ath6kl *ar);
+int ath6kl_core_init(struct ath6kl *ar, enum ath6kl_htc_type htc_type);
 void ath6kl_core_cleanup(struct ath6kl *ar);
 void ath6kl_core_destroy(struct ath6kl *ar);
 
