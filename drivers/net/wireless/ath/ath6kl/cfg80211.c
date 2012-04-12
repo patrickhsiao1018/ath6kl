@@ -1018,6 +1018,20 @@ out:
 	vif->scan_req = NULL;
 }
 
+void ath6kl_cfg80211_ch_switch_notify(struct ath6kl_vif *vif, int freq,
+				      enum wmi_phy_mode mode)
+{
+	enum nl80211_channel_type type;
+
+	ath6kl_dbg(ATH6KL_DBG_WLAN_CFG,
+		   "channel switch notify nw_type %d freq %d mode %d\n",
+		   vif->nw_type, freq, mode);
+
+	type = (mode == WMI_11G_HT20) ? NL80211_CHAN_HT20 : NL80211_CHAN_NO_HT;
+
+	cfg80211_ch_switch_notify(vif->ndev, freq, type);
+}
+
 static int ath6kl_cfg80211_add_key(struct wiphy *wiphy, struct net_device *ndev,
 				   u8 key_index, bool pairwise,
 				   const u8 *mac_addr,
@@ -2568,28 +2582,34 @@ static int ath6kl_get_rsn_capab(struct cfg80211_beacon_data *beacon,
 	/* skip element id and length */
 	rsn_ie += 2;
 
-	/* skip version, group cipher */
-	if (rsn_ie_len < 6)
+	/* skip version */
+	if (rsn_ie_len < 2)
 		return -EINVAL;
-	rsn_ie +=  6;
-	rsn_ie_len -= 6;
+	rsn_ie +=  2;
+	rsn_ie_len -= 2;
+
+	/* skip group cipher suite */
+	if (rsn_ie_len < 4)
+		return 0;
+	rsn_ie +=  4;
+	rsn_ie_len -= 4;
 
 	/* skip pairwise cipher suite */
 	if (rsn_ie_len < 2)
-		return -EINVAL;
-	cnt = *((u16 *) rsn_ie);
+		return 0;
+	cnt = get_unaligned_le16(rsn_ie);
 	rsn_ie += (2 + cnt * 4);
 	rsn_ie_len -= (2 + cnt * 4);
 
 	/* skip akm suite */
 	if (rsn_ie_len < 2)
-		return -EINVAL;
-	cnt = *((u16 *) rsn_ie);
+		return 0;
+	cnt = get_unaligned_le16(rsn_ie);
 	rsn_ie += (2 + cnt * 4);
 	rsn_ie_len -= (2 + cnt * 4);
 
 	if (rsn_ie_len < 2)
-		return -EINVAL;
+		return 0;
 
 	memcpy(rsn_capab, rsn_ie, 2);
 
@@ -2766,6 +2786,7 @@ static int ath6kl_start_ap(struct wiphy *wiphy, struct net_device *dev,
 			return res;
 	}
 
+	memcpy(&vif->profile, &p, sizeof(p));
 	res = ath6kl_wmi_ap_profile_commit(ar->wmi, vif->fw_vif_idx, &p);
 	if (res < 0)
 		return res;
