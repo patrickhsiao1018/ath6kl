@@ -969,7 +969,7 @@ static void rs_tx_status(void *priv_r, struct ieee80211_supported_band *sband,
 	    (tbl_type.is_SGI != !!(mac_flags & IEEE80211_TX_RC_SHORT_GI)) ||
 	    (tbl_type.is_ht40 != !!(mac_flags & IEEE80211_TX_RC_40_MHZ_WIDTH)) ||
 	    (tbl_type.is_dup != !!(mac_flags & IEEE80211_TX_RC_DUP_DATA)) ||
-	    (tbl_type.ant_type != info->antenna_sel_tx) ||
+	    (tbl_type.ant_type != info->status.antenna) ||
 	    (!!(tx_rate & RATE_MCS_HT_MSK) != !!(mac_flags & IEEE80211_TX_RC_MCS)) ||
 	    (!!(tx_rate & RATE_MCS_GF_MSK) != !!(mac_flags & IEEE80211_TX_RC_GREEN_FIELD)) ||
 	    (rs_index != mac_index)) {
@@ -2166,7 +2166,7 @@ static void rs_stay_in_table(struct iwl_lq_sta *lq_sta, bool force_search)
 		    (lq_sta->total_success > lq_sta->max_success_limit) ||
 		    ((!lq_sta->search_better_tbl) && (lq_sta->flush_timer)
 		     && (flush_interval_passed))) {
-			IWL_DEBUG_RATE(priv, "LQ: stay is expired %d %d %d\n:",
+			IWL_DEBUG_RATE(priv, "LQ: stay is expired %d %d %d\n",
 				     lq_sta->total_failed,
 				     lq_sta->total_success,
 				     flush_interval_passed);
@@ -3083,11 +3083,6 @@ static void rs_free_sta(void *priv_r, struct ieee80211_sta *sta,
 }
 
 #ifdef CONFIG_MAC80211_DEBUGFS
-static int open_file_generic(struct inode *inode, struct file *file)
-{
-	file->private_data = inode->i_private;
-	return 0;
-}
 static void rs_dbgfs_set_mcs(struct iwl_lq_sta *lq_sta,
 			     u32 *rate_n_flags, int index)
 {
@@ -3226,7 +3221,7 @@ static ssize_t rs_sta_dbgfs_scale_table_read(struct file *file,
 static const struct file_operations rs_sta_dbgfs_scale_table_ops = {
 	.write = rs_sta_dbgfs_scale_table_write,
 	.read = rs_sta_dbgfs_scale_table_read,
-	.open = open_file_generic,
+	.open = simple_open,
 	.llseek = default_llseek,
 };
 static ssize_t rs_sta_dbgfs_stats_table_read(struct file *file,
@@ -3269,7 +3264,7 @@ static ssize_t rs_sta_dbgfs_stats_table_read(struct file *file,
 
 static const struct file_operations rs_sta_dbgfs_stats_table_ops = {
 	.read = rs_sta_dbgfs_stats_table_read,
-	.open = open_file_generic,
+	.open = simple_open,
 	.llseek = default_llseek,
 };
 
@@ -3295,7 +3290,7 @@ static ssize_t rs_sta_dbgfs_rate_scale_data_read(struct file *file,
 
 static const struct file_operations rs_sta_dbgfs_rate_scale_data_ops = {
 	.read = rs_sta_dbgfs_rate_scale_data_read,
-	.open = open_file_generic,
+	.open = simple_open,
 	.llseek = default_llseek,
 };
 
