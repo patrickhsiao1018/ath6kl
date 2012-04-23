@@ -758,7 +758,7 @@ static void ath6kl_htc_tx_bundle(struct htc_endpoint *endpoint,
 	u32 txb_mask;
 	u8 ac = WMM_NUM_AC;
 
-	if ((HTC_CTRL_RSVD_SVC != endpoint->svc_id) ||
+	if ((HTC_CTRL_RSVD_SVC != endpoint->svc_id) &&
 	    (WMI_CONTROL_SVC != endpoint->svc_id))
 		ac = target->dev->ar->ep2ac_map[endpoint->eid];
 
@@ -793,16 +793,17 @@ static void ath6kl_htc_tx_bundle(struct htc_endpoint *endpoint,
 				 * itself
 				 */
 				txb_mask = ((1 << ac) - 1);
-		/*
-		 * when the scatter request resources drop below a
-		 * certain threshold, disable Tx bundling for all
-		 * AC's with priority lower than the current requesting
-		 * AC. Otherwise re-enable Tx bundling for them
-		 */
-		if (scat_req->scat_q_depth < ATH6KL_SCATTER_REQS)
-			target->tx_bndl_mask &= ~txb_mask;
-		else
-			target->tx_bndl_mask |= txb_mask;
+
+			/*
+			 * when the scatter request resources drop below a
+			 * certain threshold, disable Tx bundling for all
+			 * AC's with priority lower than the current requesting
+			 * AC. Otherwise re-enable Tx bundling for them
+			 */
+			if (scat_req->scat_q_depth < ATH6KL_SCATTER_REQS)
+				target->tx_bndl_mask &= ~txb_mask;
+			else
+				target->tx_bndl_mask |= txb_mask;
 		}
 
 		ath6kl_dbg(ATH6KL_DBG_HTC, "htc tx pkts to scatter: %d\n",
@@ -866,7 +867,7 @@ static void ath6kl_htc_tx_from_queue(struct htc_target *target,
 	 */
 	INIT_LIST_HEAD(&txq);
 
-	if ((HTC_CTRL_RSVD_SVC != endpoint->svc_id) ||
+	if ((HTC_CTRL_RSVD_SVC != endpoint->svc_id) &&
 	    (WMI_CONTROL_SVC != endpoint->svc_id))
 		ac = target->dev->ar->ep2ac_map[endpoint->eid];
 
