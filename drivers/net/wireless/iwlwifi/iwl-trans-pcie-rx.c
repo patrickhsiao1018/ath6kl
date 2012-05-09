@@ -385,6 +385,7 @@ static void iwl_rx_handle_rxbuf(struct iwl_trans *trans,
 			._offset = offset,
 			._page = rxb->page,
 			._page_stolen = false,
+			.truesize = max_len,
 		};
 
 		pkt = rxb_addr(&rxcb);
@@ -648,8 +649,7 @@ void iwl_irq_tasklet(struct iwl_trans *trans)
 	if (inta & CSR_INT_BIT_RF_KILL) {
 		bool hw_rfkill;
 
-		hw_rfkill = !(iwl_read32(trans, CSR_GP_CNTRL) &
-				CSR_GP_CNTRL_REG_FLAG_HW_RF_KILL_SW);
+		hw_rfkill = iwl_is_rfkill_set(trans);
 		IWL_WARN(trans, "RF_KILL bit toggled to %s.\n",
 				hw_rfkill ? "disable radio" : "enable radio");
 

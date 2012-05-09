@@ -210,7 +210,7 @@ static u32 ieee80211_config_ht_tx(struct ieee80211_sub_if_data *sdata,
 		disable_40 = true;
 
 	if (sta && (!reconfig ||
-		    (disable_40 != !!(sta->sta.ht_cap.cap &
+		    (disable_40 != !(sta->sta.ht_cap.cap &
 					IEEE80211_HT_CAP_SUP_WIDTH_20_40)))) {
 
 		if (disable_40)
@@ -3523,7 +3523,7 @@ int ieee80211_mgd_disassoc(struct ieee80211_sub_if_data *sdata,
 	return 0;
 }
 
-void ieee80211_mgd_teardown(struct ieee80211_sub_if_data *sdata)
+void ieee80211_mgd_stop(struct ieee80211_sub_if_data *sdata)
 {
 	struct ieee80211_if_managed *ifmgd = &sdata->u.mgd;
 

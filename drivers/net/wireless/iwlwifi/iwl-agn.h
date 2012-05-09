@@ -64,6 +64,7 @@
 #define __iwl_agn_h__
 
 #include "iwl-dev.h"
+#include "iwl-config.h"
 
 /* The first 11 queues (0-10) are used otherwise */
 #define IWLAGN_FIRST_AMPDU_QUEUE	11
@@ -81,6 +82,7 @@ extern struct iwl_lib_ops iwl6000_lib;
 extern struct iwl_lib_ops iwl6030_lib;
 
 
+#define TIME_UNIT		1024
 
 /*****************************************************
 * DRIVER STATUS FUNCTIONS
@@ -154,7 +156,6 @@ void iwl_set_flags_for_band(struct iwl_priv *priv,
 			    struct iwl_rxon_context *ctx,
 			    enum ieee80211_band band,
 			    struct ieee80211_vif *vif);
-void iwl_set_rate(struct iwl_priv *priv);
 
 /* uCode */
 int iwl_send_bt_env(struct iwl_priv *priv, u8 action, u8 type);
@@ -475,6 +476,19 @@ static inline void iwl_dvm_set_pmi(struct iwl_priv *priv, bool state)
 	iwl_trans_set_pmi(priv->trans, state);
 }
 
+#ifdef CONFIG_IWLWIFI_DEBUGFS
+int iwl_dbgfs_register(struct iwl_priv *priv, const char *name);
+void iwl_dbgfs_unregister(struct iwl_priv *priv);
+#else
+static inline int iwl_dbgfs_register(struct iwl_priv *priv, const char *name)
+{
+	return 0;
+}
+static inline void iwl_dbgfs_unregister(struct iwl_priv *priv)
+{
+}
+#endif /* CONFIG_IWLWIFI_DEBUGFS */
+
 #ifdef CONFIG_IWLWIFI_DEBUG
 #define IWL_DEBUG_QUIET_RFKILL(m, fmt, args...)	\
 do {									\
@@ -509,7 +523,7 @@ static inline const char *iwl_dvm_get_cmd_string(u8 cmd)
 void iwl_setup_deferred_work(struct iwl_priv *priv);
 int iwl_send_wimax_coex(struct iwl_priv *priv);
 int iwl_send_bt_env(struct iwl_priv *priv, u8 action, u8 type);
-void iwl_debug_config(struct iwl_priv *priv);
+void iwl_option_config(struct iwl_priv *priv);
 void iwl_set_hw_params(struct iwl_priv *priv);
 void iwl_init_context(struct iwl_priv *priv, u32 ucode_flags);
 int iwl_init_drv(struct iwl_priv *priv);

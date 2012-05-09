@@ -1663,7 +1663,8 @@ u8 *ieee80211_ie_build_ht_cap(u8 *pos, struct ieee80211_sta_ht_cap *ht_cap,
 
 u8 *ieee80211_ie_build_ht_oper(u8 *pos, struct ieee80211_sta_ht_cap *ht_cap,
 			       struct ieee80211_channel *channel,
-			       enum nl80211_channel_type channel_type)
+			       enum nl80211_channel_type channel_type,
+			       u16 prot_mode)
 {
 	struct ieee80211_ht_operation *ht_oper;
 	/* Build HT Information */
@@ -1689,11 +1690,7 @@ u8 *ieee80211_ie_build_ht_oper(u8 *pos, struct ieee80211_sta_ht_cap *ht_cap,
 	    channel_type != NL80211_CHAN_HT20)
 		ht_oper->ht_param |= IEEE80211_HT_PARAM_CHAN_WIDTH_ANY;
 
-	/*
-	 * Note: According to 802.11n-2009 9.13.3.1, HT Protection field and
-	 * RIFS Mode are reserved in IBSS mode, therefore keep them at 0
-	 */
-	ht_oper->operation_mode = 0x0000;
+	ht_oper->operation_mode = cpu_to_le16(prot_mode);
 	ht_oper->stbc_param = 0x0000;
 
 	/* It seems that Basic MCS set and Supported MCS set
@@ -1801,6 +1798,10 @@ int ieee80211_ave_rssi(struct ieee80211_vif *vif)
 	struct ieee80211_sub_if_data *sdata = vif_to_sdata(vif);
 	struct ieee80211_if_managed *ifmgd = &sdata->u.mgd;
 
+	if (WARN_ON_ONCE(sdata->vif.type != NL80211_IFTYPE_STATION)) {
+		/* non-managed type inferfaces */
+		return 0;
+	}
 	return ifmgd->ave_beacon_signal;
 }
 EXPORT_SYMBOL_GPL(ieee80211_ave_rssi);

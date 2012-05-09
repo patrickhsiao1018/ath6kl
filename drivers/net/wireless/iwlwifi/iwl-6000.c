@@ -28,7 +28,8 @@
 #include <linux/stringify.h>
 #include "iwl-config.h"
 #include "iwl-cfg.h"
-#include "iwl-dev.h" /* still needed */
+#include "iwl-agn-hw.h"
+#include "iwl-commands.h" /* needed for BT for now */
 
 /* Highest firmware API version supported */
 #define IWL6000_UCODE_API_MAX 6
@@ -38,11 +39,27 @@
 /* Oldest version we won't warn about */
 #define IWL6000_UCODE_API_OK 4
 #define IWL6000G2_UCODE_API_OK 5
+#define IWL6050_UCODE_API_OK 5
+#define IWL6000G2B_UCODE_API_OK 6
 
 /* Lowest firmware API version supported */
 #define IWL6000_UCODE_API_MIN 4
 #define IWL6050_UCODE_API_MIN 4
 #define IWL6000G2_UCODE_API_MIN 4
+
+/* EEPROM versions */
+#define EEPROM_6000_TX_POWER_VERSION	(4)
+#define EEPROM_6000_EEPROM_VERSION	(0x423)
+#define EEPROM_6050_TX_POWER_VERSION	(4)
+#define EEPROM_6050_EEPROM_VERSION	(0x532)
+#define EEPROM_6150_TX_POWER_VERSION	(6)
+#define EEPROM_6150_EEPROM_VERSION	(0x553)
+#define EEPROM_6005_TX_POWER_VERSION	(6)
+#define EEPROM_6005_EEPROM_VERSION	(0x709)
+#define EEPROM_6030_TX_POWER_VERSION	(6)
+#define EEPROM_6030_EEPROM_VERSION	(0x709)
+#define EEPROM_6035_TX_POWER_VERSION	(6)
+#define EEPROM_6035_EEPROM_VERSION	(0x753)
 
 #define IWL6000_FW_PRE "iwlwifi-6000-"
 #define IWL6000_MODULE_FIRMWARE(api) IWL6000_FW_PRE __stringify(api) ".ucode"
@@ -175,7 +192,7 @@ const struct iwl_cfg iwl6005_2agn_mow2_cfg = {
 #define IWL_DEVICE_6030						\
 	.fw_name_pre = IWL6030_FW_PRE,				\
 	.ucode_api_max = IWL6000G2_UCODE_API_MAX,		\
-	.ucode_api_ok = IWL6000G2_UCODE_API_OK,			\
+	.ucode_api_ok = IWL6000G2B_UCODE_API_OK,		\
 	.ucode_api_min = IWL6000G2_UCODE_API_MIN,		\
 	.device_family = IWL_DEVICE_FAMILY_6030,		\
 	.max_inst_size = IWL60_RTC_INST_SIZE,			\
@@ -341,6 +358,6 @@ const struct iwl_cfg iwl6000_3agn_cfg = {
 };
 
 MODULE_FIRMWARE(IWL6000_MODULE_FIRMWARE(IWL6000_UCODE_API_OK));
-MODULE_FIRMWARE(IWL6050_MODULE_FIRMWARE(IWL6050_UCODE_API_MAX));
-MODULE_FIRMWARE(IWL6005_MODULE_FIRMWARE(IWL6000G2_UCODE_API_MAX));
-MODULE_FIRMWARE(IWL6030_MODULE_FIRMWARE(IWL6000G2_UCODE_API_MAX));
+MODULE_FIRMWARE(IWL6050_MODULE_FIRMWARE(IWL6050_UCODE_API_OK));
+MODULE_FIRMWARE(IWL6005_MODULE_FIRMWARE(IWL6000G2_UCODE_API_OK));
+MODULE_FIRMWARE(IWL6030_MODULE_FIRMWARE(IWL6000G2B_UCODE_API_OK));
