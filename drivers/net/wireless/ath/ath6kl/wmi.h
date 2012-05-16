@@ -624,6 +624,10 @@ enum wmi_cmd_id {
 	WMI_SEND_MGMT_CMDID,
 	WMI_BEGIN_SCAN_CMDID,
 
+	WMI_SET_BLACK_LIST,
+	WMI_SET_MCASTRATE,
+
+	WMI_STA_BMISS_ENHANCE_CMDID,
 };
 
 enum wmi_mgmt_frame_type {
@@ -960,6 +964,9 @@ enum wmi_bss_filter {
 	/* beacons matching probed ssid */
 	PROBED_SSID_FILTER,
 
+	/* beacons matching matched ssid */
+	MATCHED_SSID_FILTER,
+
 	/* marker only */
 	LAST_BSS_FILTER,
 };
@@ -989,6 +996,9 @@ enum wmi_ssid_flag {
 
 	/* probes for any ssid */
 	ANY_SSID_FLAG = 0x02,
+
+	/* match for ssid */
+	MATCH_SSID_FLAG = 0x08,
 };
 
 struct wmi_probed_ssid_cmd {
@@ -1016,6 +1026,11 @@ struct wmi_bmiss_time_cmd {
 	__le16 bmiss_time;
 	__le16 num_beacons;
 };
+
+/* WMI_STA_ENHANCE_BMISS_CMDID */
+struct wmi_sta_bmiss_enhance_cmd {
+	u8 enable;
+} __packed;
 
 /* WMI_SET_POWER_MODE_CMDID */
 enum wmi_power_mode {
@@ -2547,6 +2562,8 @@ int ath6kl_wmi_set_roam_mode_cmd(struct wmi *wmi, enum wmi_roam_mode mode);
 int ath6kl_wmi_mcast_filter_cmd(struct wmi *wmi, u8 if_idx, bool mc_all_on);
 int ath6kl_wmi_add_del_mcast_filter_cmd(struct wmi *wmi, u8 if_idx,
 					u8 *filter, bool add_filter);
+int ath6kl_wmi_sta_bmiss_enhance_cmd(struct wmi *wmi, u8 if_idx, bool enable);
+
 /* AP mode uAPSD */
 int ath6kl_wmi_ap_set_apsd(struct wmi *wmi, u8 if_idx, u8 enable);
 

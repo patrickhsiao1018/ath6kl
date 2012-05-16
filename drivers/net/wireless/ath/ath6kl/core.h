@@ -107,6 +107,14 @@ enum ath6kl_fw_capability {
 	 */
 	ATH6KL_FW_CAPABILITY_WOW_MULTICAST_FILTER,
 
+	/* Firmware supports enhanced bmiss detection */
+	ATH6KL_FW_CAPABILITY_BMISS_ENHANCE,
+
+	/*
+	 * FW supports matching of ssid in schedule scan
+	 */
+	ATH6KL_FW_CAPABILITY_SCHED_SCAN_MATCH_LIST,
+
 	/* this needs to be last */
 	ATH6KL_FW_CAPABILITY_MAX,
 };
