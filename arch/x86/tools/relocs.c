@@ -60,6 +60,7 @@ static const char * const sym_regex_kernel[S_NSYMTYPES] = {
 	"__x86_cpu_dev_(start|end)|"
 	"(__parainstructions|__alt_instructions)(|_end)|"
 	"(__iommu_table|__apicdrivers|__smp_locks)(|_end)|"
+	"(jiffies|jiffies_64)|"
 	"_end)$"
 };
 
