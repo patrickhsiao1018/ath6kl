@@ -163,6 +163,11 @@ typedef struct {
 	__u8 b[6];
 } __packed bdaddr_t;
 
+/* BD Address type */
+#define BDADDR_BREDR		0x00
+#define BDADDR_LE_PUBLIC	0x01
+#define BDADDR_LE_RANDOM	0x02
+
 #define BDADDR_ANY   (&(bdaddr_t) {{0, 0, 0, 0, 0, 0}})
 #define BDADDR_LOCAL (&(bdaddr_t) {{0, 0, 0, 0xff, 0xff, 0xff}})
 
@@ -189,7 +194,12 @@ struct bt_sock {
 	bdaddr_t    dst;
 	struct list_head accept_q;
 	struct sock *parent;
-	u32 defer_setup;
+	unsigned long flags;
+};
+
+enum {
+	BT_SK_DEFER_SETUP,
+	BT_SK_SUSPEND,
 };
 
 struct bt_sock_list {
@@ -230,9 +240,6 @@ struct bt_skb_cb {
 	__u8 pkt_type;
 	__u8 incoming;
 	__u16 expect;
-	__u16 tx_seq;
-	__u8 retries;
-	__u8 sar;
 	__u8 force_active;
 	struct l2cap_ctrl control;
 };
@@ -254,12 +261,10 @@ static inline struct sk_buff *bt_skb_send_alloc(struct sock *sk,
 {
 	struct sk_buff *skb;
 
-	release_sock(sk);
 	if ((skb = sock_alloc_send_skb(sk, len + BT_SKB_RESERVE, nb, err))) {
 		skb_reserve(skb, BT_SKB_RESERVE);
 		bt_cb(skb)->incoming  = 0;
 	}
-	lock_sock(sk);
 
 	if (!skb && *err)
 		return NULL;
