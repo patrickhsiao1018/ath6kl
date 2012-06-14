@@ -390,14 +390,6 @@ static void ath9k_hw_disablepcie(struct ath_hw *ah)
 	REG_WRITE(ah, AR_PCIE_SERDES2, 0x00000000);
 }
 
-static void ath9k_hw_aspm_init(struct ath_hw *ah)
-{
-	struct ath_common *common = ath9k_hw_common(ah);
-
-	if (common->bus_ops->aspm_init)
-		common->bus_ops->aspm_init(common);
-}
-
 /* This should work for all families including legacy */
 static bool ath9k_hw_chip_test(struct ath_hw *ah)
 {
@@ -692,9 +684,6 @@ static int __ath9k_hw_init(struct ath_hw *ah)
 	r = ath9k_hw_fill_cap_info(ah);
 	if (r)
 		return r;
-
-	if (ah->is_pciexpress)
-		ath9k_hw_aspm_init(ah);
 
 	r = ath9k_hw_init_macaddr(ah);
 	if (r) {
@@ -1359,6 +1348,9 @@ static bool ath9k_hw_set_reset(struct ath_hw *ah, int type)
 		}
 	}
 
+	if (ath9k_hw_mci_is_enabled(ah))
+		ar9003_mci_check_gpm_offset(ah);
+
 	REG_WRITE(ah, AR_RTC_RC, rst_flags);
 
 	REGWRITE_BUFFER_FLUSH(ah);
@@ -1443,9 +1435,6 @@ static bool ath9k_hw_set_reset_reg(struct ath_hw *ah, u32 type)
 		break;
 	}
 
-	if (ah->caps.hw_caps & ATH9K_HW_CAP_MCI)
-		REG_WRITE(ah, AR_RTC_KEEP_AWAKE, 0x2);
-
 	return ret;
 }
 
@@ -1468,6 +1457,9 @@ static bool ath9k_hw_chip_reset(struct ath_hw *ah,
 		return false;
 
 	ah->chip_fullsleep = false;
+
+	if (AR_SREV_9330(ah))
+		ar9003_hw_internal_regulator_apply(ah);
 	ath9k_hw_init_pll(ah, chan);
 	ath9k_hw_set_rfmode(ah, chan);
 
@@ -1718,8 +1710,8 @@ static int ath9k_hw_do_fastcc(struct ath_hw *ah, struct ath9k_channel *chan)
 	ath9k_hw_loadnf(ah, ah->curchan);
 	ath9k_hw_start_nfcal(ah, true);
 
-	if ((ah->caps.hw_caps & ATH9K_HW_CAP_MCI) && ar9003_mci_is_ready(ah))
-		ar9003_mci_2g5g_switch(ah, true);
+	if (ath9k_hw_mci_is_enabled(ah))
+		ar9003_mci_2g5g_switch(ah, false);
 
 	if (AR_SREV_9271(ah))
 		ar9002_hw_load_ani_reg(ah, chan);
@@ -1739,10 +1731,9 @@ int ath9k_hw_reset(struct ath_hw *ah, struct ath9k_channel *chan,
 	u64 tsf = 0;
 	int i, r;
 	bool start_mci_reset = false;
-	bool mci = !!(ah->caps.hw_caps & ATH9K_HW_CAP_MCI);
 	bool save_fullsleep = ah->chip_fullsleep;
 
-	if (mci) {
+	if (ath9k_hw_mci_is_enabled(ah)) {
 		start_mci_reset = ar9003_mci_start_reset(ah, chan);
 		if (start_mci_reset)
 			return 0;
@@ -1771,7 +1762,7 @@ int ath9k_hw_reset(struct ath_hw *ah, struct ath9k_channel *chan,
 			return r;
 	}
 
-	if (mci)
+	if (ath9k_hw_mci_is_enabled(ah))
 		ar9003_mci_stop_bt(ah, save_fullsleep);
 
 	saveDefAntenna = REG_READ(ah, AR_DEF_ANTENNA);
@@ -1829,7 +1820,7 @@ int ath9k_hw_reset(struct ath_hw *ah, struct ath9k_channel *chan,
 	if (r)
 		return r;
 
-	if (mci)
+	if (ath9k_hw_mci_is_enabled(ah))
 		ar9003_mci_reset(ah, false, IS_CHAN_2GHZ(chan), save_fullsleep);
 
 	/*
@@ -1924,7 +1915,8 @@ int ath9k_hw_reset(struct ath_hw *ah, struct ath9k_channel *chan,
 
 	ath9k_hw_set_dma(ah);
 
-	REG_WRITE(ah, AR_OBS, 8);
+	if (!ath9k_hw_mci_is_enabled(ah))
+		REG_WRITE(ah, AR_OBS, 8);
 
 	if (ah->config.rx_intr_mitigation) {
 		REG_RMW_FIELD(ah, AR_RIMT, AR_RIMT_LAST, 500);
@@ -1948,7 +1940,7 @@ int ath9k_hw_reset(struct ath_hw *ah, struct ath9k_channel *chan,
 	ath9k_hw_loadnf(ah, chan);
 	ath9k_hw_start_nfcal(ah, true);
 
-	if (mci && ar9003_mci_end_reset(ah, chan, caldata))
+	if (ath9k_hw_mci_is_enabled(ah) && ar9003_mci_end_reset(ah, chan, caldata))
 		return -EIO;
 
 	ENABLE_REGWRITE_BUFFER(ah);
@@ -1993,7 +1985,7 @@ int ath9k_hw_reset(struct ath_hw *ah, struct ath9k_channel *chan,
 	if (ath9k_hw_btcoex_is_enabled(ah))
 		ath9k_hw_btcoex_enable(ah);
 
-	if (mci)
+	if (ath9k_hw_mci_is_enabled(ah))
 		ar9003_mci_check_bt(ah);
 
 	if (AR_SREV_9300_20_OR_LATER(ah)) {
@@ -2016,39 +2008,35 @@ EXPORT_SYMBOL(ath9k_hw_reset);
  * Notify Power Mgt is disabled in self-generated frames.
  * If requested, force chip to sleep.
  */
-static void ath9k_set_power_sleep(struct ath_hw *ah, int setChip)
+static void ath9k_set_power_sleep(struct ath_hw *ah)
 {
 	REG_SET_BIT(ah, AR_STA_ID1, AR_STA_ID1_PWR_SAV);
-	if (setChip) {
-		if (AR_SREV_9462(ah)) {
-			REG_WRITE(ah, AR_TIMER_MODE,
-				  REG_READ(ah, AR_TIMER_MODE) & 0xFFFFFF00);
-			REG_WRITE(ah, AR_NDP2_TIMER_MODE, REG_READ(ah,
-				  AR_NDP2_TIMER_MODE) & 0xFFFFFF00);
-			REG_WRITE(ah, AR_SLP32_INC,
-				  REG_READ(ah, AR_SLP32_INC) & 0xFFF00000);
-			/* xxx Required for WLAN only case ? */
-			REG_WRITE(ah, AR_MCI_INTERRUPT_RX_MSG_EN, 0);
-			udelay(100);
-		}
 
-		/*
-		 * Clear the RTC force wake bit to allow the
-		 * mac to go to sleep.
-		 */
-		REG_CLR_BIT(ah, AR_RTC_FORCE_WAKE, AR_RTC_FORCE_WAKE_EN);
+	if (AR_SREV_9462(ah)) {
+		REG_CLR_BIT(ah, AR_TIMER_MODE, 0xff);
+		REG_CLR_BIT(ah, AR_NDP2_TIMER_MODE, 0xff);
+		REG_CLR_BIT(ah, AR_SLP32_INC, 0xfffff);
+		/* xxx Required for WLAN only case ? */
+		REG_WRITE(ah, AR_MCI_INTERRUPT_RX_MSG_EN, 0);
+		udelay(100);
+	}
 
-		if (AR_SREV_9462(ah))
-			udelay(100);
+	/*
+	 * Clear the RTC force wake bit to allow the
+	 * mac to go to sleep.
+	 */
+	REG_CLR_BIT(ah, AR_RTC_FORCE_WAKE, AR_RTC_FORCE_WAKE_EN);
 
-		if (!AR_SREV_9100(ah) && !AR_SREV_9300_20_OR_LATER(ah))
-			REG_WRITE(ah, AR_RC, AR_RC_AHB | AR_RC_HOSTIF);
+	if (ath9k_hw_mci_is_enabled(ah))
+		udelay(100);
 
-		/* Shutdown chip. Active low */
-		if (!AR_SREV_5416(ah) && !AR_SREV_9271(ah)) {
-			REG_CLR_BIT(ah, AR_RTC_RESET, AR_RTC_RESET_EN);
-			udelay(2);
-		}
+	if (!AR_SREV_9100(ah) && !AR_SREV_9300_20_OR_LATER(ah))
+		REG_WRITE(ah, AR_RC, AR_RC_AHB | AR_RC_HOSTIF);
+
+	/* Shutdown chip. Active low */
+	if (!AR_SREV_5416(ah) && !AR_SREV_9271(ah)) {
+		REG_CLR_BIT(ah, AR_RTC_RESET, AR_RTC_RESET_EN);
+		udelay(2);
 	}
 
 	/* Clear Bit 14 of AR_WA after putting chip into Full Sleep mode. */
@@ -2061,44 +2049,38 @@ static void ath9k_set_power_sleep(struct ath_hw *ah, int setChip)
  * frames. If request, set power mode of chip to
  * auto/normal.  Duration in units of 128us (1/8 TU).
  */
-static void ath9k_set_power_network_sleep(struct ath_hw *ah, int setChip)
+static void ath9k_set_power_network_sleep(struct ath_hw *ah)
 {
-	u32 val;
+	struct ath9k_hw_capabilities *pCap = &ah->caps;
 
 	REG_SET_BIT(ah, AR_STA_ID1, AR_STA_ID1_PWR_SAV);
-	if (setChip) {
-		struct ath9k_hw_capabilities *pCap = &ah->caps;
 
-		if (!(pCap->hw_caps & ATH9K_HW_CAP_AUTOSLEEP)) {
-			/* Set WakeOnInterrupt bit; clear ForceWake bit */
-			REG_WRITE(ah, AR_RTC_FORCE_WAKE,
-				  AR_RTC_FORCE_WAKE_ON_INT);
-		} else {
+	if (!(pCap->hw_caps & ATH9K_HW_CAP_AUTOSLEEP)) {
+		/* Set WakeOnInterrupt bit; clear ForceWake bit */
+		REG_WRITE(ah, AR_RTC_FORCE_WAKE,
+			  AR_RTC_FORCE_WAKE_ON_INT);
+	} else {
 
-			/* When chip goes into network sleep, it could be waken
-			 * up by MCI_INT interrupt caused by BT's HW messages
-			 * (LNA_xxx, CONT_xxx) which chould be in a very fast
-			 * rate (~100us). This will cause chip to leave and
-			 * re-enter network sleep mode frequently, which in
-			 * consequence will have WLAN MCI HW to generate lots of
-			 * SYS_WAKING and SYS_SLEEPING messages which will make
-			 * BT CPU to busy to process.
-			 */
-			if (AR_SREV_9462(ah)) {
-				val = REG_READ(ah, AR_MCI_INTERRUPT_RX_MSG_EN) &
-					~AR_MCI_INTERRUPT_RX_HW_MSG_MASK;
-				REG_WRITE(ah, AR_MCI_INTERRUPT_RX_MSG_EN, val);
-			}
-			/*
-			 * Clear the RTC force wake bit to allow the
-			 * mac to go to sleep.
-			 */
-			REG_CLR_BIT(ah, AR_RTC_FORCE_WAKE,
-				    AR_RTC_FORCE_WAKE_EN);
+		/* When chip goes into network sleep, it could be waken
+		 * up by MCI_INT interrupt caused by BT's HW messages
+		 * (LNA_xxx, CONT_xxx) which chould be in a very fast
+		 * rate (~100us). This will cause chip to leave and
+		 * re-enter network sleep mode frequently, which in
+		 * consequence will have WLAN MCI HW to generate lots of
+		 * SYS_WAKING and SYS_SLEEPING messages which will make
+		 * BT CPU to busy to process.
+		 */
+		if (ath9k_hw_mci_is_enabled(ah))
+			REG_CLR_BIT(ah, AR_MCI_INTERRUPT_RX_MSG_EN,
+				    AR_MCI_INTERRUPT_RX_HW_MSG_MASK);
+		/*
+		 * Clear the RTC force wake bit to allow the
+		 * mac to go to sleep.
+		 */
+		REG_CLR_BIT(ah, AR_RTC_FORCE_WAKE, AR_RTC_FORCE_WAKE_EN);
 
-			if (AR_SREV_9462(ah))
-				udelay(30);
-		}
+		if (ath9k_hw_mci_is_enabled(ah))
+			udelay(30);
 	}
 
 	/* Clear Bit 14 of AR_WA after putting chip into Net Sleep mode. */
@@ -2106,7 +2088,7 @@ static void ath9k_set_power_network_sleep(struct ath_hw *ah, int setChip)
 		REG_WRITE(ah, AR_WA, ah->WARegVal & ~AR_WA_D3_L1_DISABLE);
 }
 
-static bool ath9k_hw_set_power_awake(struct ath_hw *ah, int setChip)
+static bool ath9k_hw_set_power_awake(struct ath_hw *ah)
 {
 	u32 val;
 	int i;
@@ -2117,37 +2099,38 @@ static bool ath9k_hw_set_power_awake(struct ath_hw *ah, int setChip)
 		udelay(10);
 	}
 
-	if (setChip) {
-		if ((REG_READ(ah, AR_RTC_STATUS) &
-		     AR_RTC_STATUS_M) == AR_RTC_STATUS_SHUTDOWN) {
-			if (!ath9k_hw_set_reset_reg(ah, ATH9K_RESET_POWER_ON)) {
-				return false;
-			}
-			if (!AR_SREV_9300_20_OR_LATER(ah))
-				ath9k_hw_init_pll(ah, NULL);
-		}
-		if (AR_SREV_9100(ah))
-			REG_SET_BIT(ah, AR_RTC_RESET,
-				    AR_RTC_RESET_EN);
-
-		REG_SET_BIT(ah, AR_RTC_FORCE_WAKE,
-			    AR_RTC_FORCE_WAKE_EN);
-		udelay(50);
-
-		for (i = POWER_UP_TIME / 50; i > 0; i--) {
-			val = REG_READ(ah, AR_RTC_STATUS) & AR_RTC_STATUS_M;
-			if (val == AR_RTC_STATUS_ON)
-				break;
-			udelay(50);
-			REG_SET_BIT(ah, AR_RTC_FORCE_WAKE,
-				    AR_RTC_FORCE_WAKE_EN);
-		}
-		if (i == 0) {
-			ath_err(ath9k_hw_common(ah),
-				"Failed to wakeup in %uus\n",
-				POWER_UP_TIME / 20);
+	if ((REG_READ(ah, AR_RTC_STATUS) &
+	     AR_RTC_STATUS_M) == AR_RTC_STATUS_SHUTDOWN) {
+		if (!ath9k_hw_set_reset_reg(ah, ATH9K_RESET_POWER_ON)) {
 			return false;
 		}
+		if (!AR_SREV_9300_20_OR_LATER(ah))
+			ath9k_hw_init_pll(ah, NULL);
+	}
+	if (AR_SREV_9100(ah))
+		REG_SET_BIT(ah, AR_RTC_RESET,
+			    AR_RTC_RESET_EN);
+
+	REG_SET_BIT(ah, AR_RTC_FORCE_WAKE,
+		    AR_RTC_FORCE_WAKE_EN);
+	udelay(50);
+
+	if (ath9k_hw_mci_is_enabled(ah))
+		ar9003_mci_set_power_awake(ah);
+
+	for (i = POWER_UP_TIME / 50; i > 0; i--) {
+		val = REG_READ(ah, AR_RTC_STATUS) & AR_RTC_STATUS_M;
+		if (val == AR_RTC_STATUS_ON)
+			break;
+		udelay(50);
+		REG_SET_BIT(ah, AR_RTC_FORCE_WAKE,
+			    AR_RTC_FORCE_WAKE_EN);
+	}
+	if (i == 0) {
+		ath_err(ath9k_hw_common(ah),
+			"Failed to wakeup in %uus\n",
+			POWER_UP_TIME / 20);
+		return false;
 	}
 
 	REG_CLR_BIT(ah, AR_STA_ID1, AR_STA_ID1_PWR_SAV);
@@ -2158,7 +2141,7 @@ static bool ath9k_hw_set_power_awake(struct ath_hw *ah, int setChip)
 bool ath9k_hw_setpower(struct ath_hw *ah, enum ath9k_power_mode mode)
 {
 	struct ath_common *common = ath9k_hw_common(ah);
-	int status = true, setChip = true;
+	int status = true;
 	static const char *modes[] = {
 		"AWAKE",
 		"FULL-SLEEP",
@@ -2174,25 +2157,17 @@ bool ath9k_hw_setpower(struct ath_hw *ah, enum ath9k_power_mode mode)
 
 	switch (mode) {
 	case ATH9K_PM_AWAKE:
-		status = ath9k_hw_set_power_awake(ah, setChip);
-
-		if (ah->caps.hw_caps & ATH9K_HW_CAP_MCI)
-			REG_WRITE(ah, AR_RTC_KEEP_AWAKE, 0x2);
-
+		status = ath9k_hw_set_power_awake(ah);
 		break;
 	case ATH9K_PM_FULL_SLEEP:
-		if (ah->caps.hw_caps & ATH9K_HW_CAP_MCI)
+		if (ath9k_hw_mci_is_enabled(ah))
 			ar9003_mci_set_full_sleep(ah);
 
-		ath9k_set_power_sleep(ah, setChip);
+		ath9k_set_power_sleep(ah);
 		ah->chip_fullsleep = true;
 		break;
 	case ATH9K_PM_NETWORK_SLEEP:
-
-		if (ah->caps.hw_caps & ATH9K_HW_CAP_MCI)
-			REG_WRITE(ah, AR_RTC_KEEP_AWAKE, 0x2);
-
-		ath9k_set_power_network_sleep(ah, setChip);
+		ath9k_set_power_network_sleep(ah);
 		break;
 	default:
 		ath_err(common, "Unknown power mode %u\n", mode);
@@ -2762,6 +2737,9 @@ EXPORT_SYMBOL(ath9k_hw_setrxfilter);
 
 bool ath9k_hw_phy_disable(struct ath_hw *ah)
 {
+	if (ath9k_hw_mci_is_enabled(ah))
+		ar9003_mci_bt_gain_ctrl(ah);
+
 	if (!ath9k_hw_set_reset_reg(ah, ATH9K_RESET_WARM))
 		return false;
 
