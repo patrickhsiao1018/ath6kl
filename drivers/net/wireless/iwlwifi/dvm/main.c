@@ -51,10 +51,12 @@
 #include "iwl-op-mode.h"
 #include "iwl-drv.h"
 #include "iwl-modparams.h"
+#include "iwl-prph.h"
 
 #include "dev.h"
 #include "calib.h"
 #include "agn.h"
+
 
 /******************************************************************************
  *
@@ -515,49 +517,6 @@ static void iwl_bg_tx_flush(struct work_struct *work)
 /*
  * queue/FIFO/AC mapping definitions
  */
-
-#define IWL_TX_FIFO_BK		0	/* shared */
-#define IWL_TX_FIFO_BE		1
-#define IWL_TX_FIFO_VI		2	/* shared */
-#define IWL_TX_FIFO_VO		3
-#define IWL_TX_FIFO_BK_IPAN	IWL_TX_FIFO_BK
-#define IWL_TX_FIFO_BE_IPAN	4
-#define IWL_TX_FIFO_VI_IPAN	IWL_TX_FIFO_VI
-#define IWL_TX_FIFO_VO_IPAN	5
-/* re-uses the VO FIFO, uCode will properly flush/schedule */
-#define IWL_TX_FIFO_AUX		5
-#define IWL_TX_FIFO_UNUSED	-1
-
-#define IWLAGN_CMD_FIFO_NUM	7
-
-/*
- * This queue number is required for proper operation
- * because the ucode will stop/start the scheduler as
- * required.
- */
-#define IWL_IPAN_MCAST_QUEUE	8
-
-static const u8 iwlagn_default_queue_to_tx_fifo[] = {
-	IWL_TX_FIFO_VO,
-	IWL_TX_FIFO_VI,
-	IWL_TX_FIFO_BE,
-	IWL_TX_FIFO_BK,
-	IWLAGN_CMD_FIFO_NUM,
-};
-
-static const u8 iwlagn_ipan_queue_to_tx_fifo[] = {
-	IWL_TX_FIFO_VO,
-	IWL_TX_FIFO_VI,
-	IWL_TX_FIFO_BE,
-	IWL_TX_FIFO_BK,
-	IWL_TX_FIFO_BK_IPAN,
-	IWL_TX_FIFO_BE_IPAN,
-	IWL_TX_FIFO_VI_IPAN,
-	IWL_TX_FIFO_VO_IPAN,
-	IWL_TX_FIFO_BE_IPAN,
-	IWLAGN_CMD_FIFO_NUM,
-	IWL_TX_FIFO_AUX,
-};
 
 static const u8 iwlagn_bss_ac_to_fifo[] = {
 	IWL_TX_FIFO_VO,
@@ -1185,9 +1144,6 @@ static void iwl_set_hw_params(struct iwl_priv *priv)
 		priv->hw_params.use_rts_for_aggregation =
 			priv->cfg->ht_params->use_rts_for_aggregation;
 
-	if (iwlwifi_mod_params.disable_11n & IWL_DISABLE_HT_ALL)
-		priv->hw_params.sku &= ~EEPROM_SKU_CAP_11N_ENABLE;
-
 	/* Device-specific setup */
 	priv->lib->set_hw_params(priv);
 }
@@ -1232,20 +1188,20 @@ static int iwl_eeprom_init_hw_params(struct iwl_priv *priv)
 {
 	u16 radio_cfg;
 
-	priv->hw_params.sku = priv->eeprom_data->sku;
+	priv->eeprom_data->sku = priv->eeprom_data->sku;
 
-	if (priv->hw_params.sku & EEPROM_SKU_CAP_11N_ENABLE &&
+	if (priv->eeprom_data->sku & EEPROM_SKU_CAP_11N_ENABLE &&
 	    !priv->cfg->ht_params) {
 		IWL_ERR(priv, "Invalid 11n configuration\n");
 		return -EINVAL;
 	}
 
-	if (!priv->hw_params.sku) {
+	if (!priv->eeprom_data->sku) {
 		IWL_ERR(priv, "Invalid device sku\n");
 		return -EINVAL;
 	}
 
-	IWL_INFO(priv, "Device SKU: 0x%X\n", priv->hw_params.sku);
+	IWL_INFO(priv, "Device SKU: 0x%X\n", priv->eeprom_data->sku);
 
 	radio_cfg = priv->eeprom_data->radio_cfg;
 
@@ -1351,6 +1307,10 @@ static struct iwl_op_mode *iwl_op_mode_dvm_start(struct iwl_trans *trans,
 	else
 		trans_cfg.queue_watchdog_timeout = IWL_WATCHDOG_DISABLED;
 	trans_cfg.command_names = iwl_dvm_cmd_strings;
+	trans_cfg.cmd_fifo = IWLAGN_CMD_FIFO_NUM;
+
+	WARN_ON(sizeof(priv->transport_queue_stop) * BITS_PER_BYTE <
+		priv->cfg->base_params->num_of_queues);
 
 	ucode_flags = fw->ucode_capa.flags;
 
@@ -1361,15 +1321,9 @@ static struct iwl_op_mode *iwl_op_mode_dvm_start(struct iwl_trans *trans,
 	if (ucode_flags & IWL_UCODE_TLV_FLAGS_PAN) {
 		priv->sta_key_max_num = STA_KEY_MAX_NUM_PAN;
 		trans_cfg.cmd_queue = IWL_IPAN_CMD_QUEUE_NUM;
-		trans_cfg.queue_to_fifo = iwlagn_ipan_queue_to_tx_fifo;
-		trans_cfg.n_queue_to_fifo =
-			ARRAY_SIZE(iwlagn_ipan_queue_to_tx_fifo);
 	} else {
 		priv->sta_key_max_num = STA_KEY_MAX_NUM;
 		trans_cfg.cmd_queue = IWL_DEFAULT_CMD_QUEUE_NUM;
-		trans_cfg.queue_to_fifo = iwlagn_default_queue_to_tx_fifo;
-		trans_cfg.n_queue_to_fifo =
-			ARRAY_SIZE(iwlagn_default_queue_to_tx_fifo);
 	}
 
 	/* Configure transport layer */
@@ -1448,7 +1402,7 @@ static struct iwl_op_mode *iwl_op_mode_dvm_start(struct iwl_trans *trans,
 	 ************************/
 	iwl_set_hw_params(priv);
 
-	if (!(priv->hw_params.sku & EEPROM_SKU_CAP_IPAN_ENABLE)) {
+	if (!(priv->eeprom_data->sku & EEPROM_SKU_CAP_IPAN_ENABLE)) {
 		IWL_DEBUG_INFO(priv, "Your EEPROM disabled PAN");
 		ucode_flags &= ~IWL_UCODE_TLV_FLAGS_PAN;
 		/*
@@ -1458,9 +1412,6 @@ static struct iwl_op_mode *iwl_op_mode_dvm_start(struct iwl_trans *trans,
 		ucode_flags &= ~IWL_UCODE_TLV_FLAGS_P2P;
 		priv->sta_key_max_num = STA_KEY_MAX_NUM;
 		trans_cfg.cmd_queue = IWL_DEFAULT_CMD_QUEUE_NUM;
-		trans_cfg.queue_to_fifo = iwlagn_default_queue_to_tx_fifo;
-		trans_cfg.n_queue_to_fifo =
-			ARRAY_SIZE(iwlagn_default_queue_to_tx_fifo);
 
 		/* Configure transport layer again*/
 		iwl_trans_configure(priv->trans, &trans_cfg);
@@ -1477,9 +1428,6 @@ static struct iwl_op_mode *iwl_op_mode_dvm_start(struct iwl_trans *trans,
 			priv->queue_to_mac80211[i] = i;
 		atomic_set(&priv->queue_stop_count[i], 0);
 	}
-
-	WARN_ON(trans_cfg.queue_to_fifo[trans_cfg.cmd_queue] !=
-						IWLAGN_CMD_FIFO_NUM);
 
 	if (iwl_init_drv(priv))
 		goto out_free_eeprom;
@@ -2073,7 +2021,16 @@ static void iwl_nic_config(struct iwl_op_mode *op_mode)
 		    CSR_HW_IF_CONFIG_REG_BIT_RADIO_SI |
 		    CSR_HW_IF_CONFIG_REG_BIT_MAC_SI);
 
-	priv->lib->nic_config(priv);
+	/* W/A : NIC is stuck in a reset state after Early PCIe power off
+	 * (PCIe power is lost before PERST# is asserted),
+	 * causing ME FW to lose ownership and not being able to obtain it back.
+	 */
+	iwl_set_bits_mask_prph(priv->trans, APMG_PS_CTRL_REG,
+			       APMG_PS_CTRL_EARLY_PWR_OFF_RESET_DIS,
+			       ~APMG_PS_CTRL_EARLY_PWR_OFF_RESET_DIS);
+
+	if (priv->lib->nic_config)
+		priv->lib->nic_config(priv);
 }
 
 static void iwl_wimax_active(struct iwl_op_mode *op_mode)

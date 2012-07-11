@@ -296,6 +296,7 @@ static void iwlagn_free_dma_ptr(struct iwl_trans *trans,
 static void iwl_trans_pcie_queue_stuck_timer(unsigned long data)
 {
 	struct iwl_tx_queue *txq = (void *)data;
+	struct iwl_queue *q = &txq->q;
 	struct iwl_trans_pcie *trans_pcie = txq->trans_pcie;
 	struct iwl_trans *trans = iwl_trans_pcie_get_trans(trans_pcie);
 	u32 scd_sram_addr = trans_pcie->scd_base_addr +
@@ -344,6 +345,14 @@ static void iwl_trans_pcie_queue_stuck_timer(unsigned long data)
 			iwl_read_prph(trans,
 				      SCD_QUEUE_RDPTR(i)) & (txq->q.n_bd - 1),
 			iwl_read_prph(trans, SCD_QUEUE_WRPTR(i)));
+	}
+
+	for (i = q->read_ptr; i != q->write_ptr;
+	     i = iwl_queue_inc_wrap(i, q->n_bd)) {
+		struct iwl_tx_cmd *tx_cmd =
+			(struct iwl_tx_cmd *)txq->entries[i].cmd->payload;
+		IWL_ERR(trans, "scratch %d = 0x%08x\n", i,
+			get_unaligned_le32(&tx_cmd->scratch));
 	}
 
 	iwl_op_mode_nic_error(trans->op_mode);
@@ -1037,14 +1046,11 @@ static int iwl_trans_pcie_start_fw(struct iwl_trans *trans,
 
 /*
  * Activate/Deactivate Tx DMA/FIFO channels according tx fifos mask
- * must be called under the irq lock and with MAC access
  */
 static void iwl_trans_txq_set_sched(struct iwl_trans *trans, u32 mask)
 {
 	struct iwl_trans_pcie __maybe_unused *trans_pcie =
 		IWL_TRANS_GET_PCIE_TRANS(trans);
-
-	lockdep_assert_held(&trans_pcie->irq_lock);
 
 	iwl_write_prph(trans, SCD_TXFACT, mask);
 }
@@ -1053,11 +1059,8 @@ static void iwl_tx_start(struct iwl_trans *trans)
 {
 	struct iwl_trans_pcie *trans_pcie = IWL_TRANS_GET_PCIE_TRANS(trans);
 	u32 a;
-	unsigned long flags;
-	int i, chan;
+	int chan;
 	u32 reg_val;
-
-	spin_lock_irqsave(&trans_pcie->irq_lock, flags);
 
 	/* make sure all queue are not stopped/used */
 	memset(trans_pcie->queue_stopped, 0, sizeof(trans_pcie->queue_stopped));
@@ -1088,12 +1091,8 @@ static void iwl_tx_start(struct iwl_trans *trans)
 	 */
 	iwl_write_prph(trans, SCD_CHAINEXT_EN, 0);
 
-	for (i = 0; i < trans_pcie->n_q_to_fifo; i++) {
-		int fifo = trans_pcie->setup_q_to_fifo[i];
-
-		iwl_trans_pcie_txq_enable(trans, i, fifo, IWL_INVALID_STATION,
-					  IWL_TID_NON_QOS, SCD_FRAME_LIMIT, 0);
-	}
+	iwl_trans_ac_txq_enable(trans, trans_pcie->cmd_queue,
+				trans_pcie->cmd_fifo);
 
 	/* Activate all Tx DMA/FIFO channels */
 	iwl_trans_txq_set_sched(trans, IWL_MASK(0, 7));
@@ -1108,8 +1107,6 @@ static void iwl_tx_start(struct iwl_trans *trans)
 	reg_val = iwl_read_direct32(trans, FH_TX_CHICKEN_BITS_REG);
 	iwl_write_direct32(trans, FH_TX_CHICKEN_BITS_REG,
 			   reg_val | FH_TX_CHICKEN_BITS_SCD_AUTO_RETRY_EN);
-
-	spin_unlock_irqrestore(&trans_pcie->irq_lock, flags);
 
 	/* Enable L1-Active */
 	iwl_clear_bits_prph(trans, APMG_PCIDEV_STT_REG,
@@ -1144,7 +1141,7 @@ static int iwl_trans_tx_stop(struct iwl_trans *trans)
 			FH_TSSR_TX_STATUS_REG_MSK_CHNL_IDLE(ch), 1000);
 		if (ret < 0)
 			IWL_ERR(trans,
-				"Failing on timeout while stopping DMA channel %d [0x%08x]",
+				"Failing on timeout while stopping DMA channel %d [0x%08x]\n",
 				ch,
 				iwl_read_direct32(trans,
 						  FH_TSSR_TX_STATUS_REG));
@@ -1152,7 +1149,8 @@ static int iwl_trans_tx_stop(struct iwl_trans *trans)
 	spin_unlock_irqrestore(&trans_pcie->irq_lock, flags);
 
 	if (!trans_pcie->txq) {
-		IWL_WARN(trans, "Stopping tx queues that aren't allocated...");
+		IWL_WARN(trans,
+			 "Stopping tx queues that aren't allocated...\n");
 		return 0;
 	}
 
@@ -1429,7 +1427,7 @@ static int iwl_trans_pcie_start_hw(struct iwl_trans *trans)
 
 	err = iwl_prepare_card_hw(trans);
 	if (err) {
-		IWL_ERR(trans, "Error while preparing HW: %d", err);
+		IWL_ERR(trans, "Error while preparing HW: %d\n", err);
 		goto err_free_irq;
 	}
 
@@ -1527,6 +1525,7 @@ static void iwl_trans_pcie_configure(struct iwl_trans *trans,
 	struct iwl_trans_pcie *trans_pcie = IWL_TRANS_GET_PCIE_TRANS(trans);
 
 	trans_pcie->cmd_queue = trans_cfg->cmd_queue;
+	trans_pcie->cmd_fifo = trans_cfg->cmd_fifo;
 	if (WARN_ON(trans_cfg->n_no_reclaim_cmds > MAX_NO_RECLAIM_CMDS))
 		trans_pcie->n_no_reclaim_cmds = 0;
 	else
@@ -1534,17 +1533,6 @@ static void iwl_trans_pcie_configure(struct iwl_trans *trans,
 	if (trans_pcie->n_no_reclaim_cmds)
 		memcpy(trans_pcie->no_reclaim_cmds, trans_cfg->no_reclaim_cmds,
 		       trans_pcie->n_no_reclaim_cmds * sizeof(u8));
-
-	trans_pcie->n_q_to_fifo = trans_cfg->n_queue_to_fifo;
-
-	if (WARN_ON(trans_pcie->n_q_to_fifo > IWL_MAX_HW_QUEUES))
-		trans_pcie->n_q_to_fifo = IWL_MAX_HW_QUEUES;
-
-	/* at least the command queue must be mapped */
-	WARN_ON(!trans_pcie->n_q_to_fifo);
-
-	memcpy(trans_pcie->setup_q_to_fifo, trans_cfg->queue_to_fifo,
-	       trans_pcie->n_q_to_fifo * sizeof(u8));
 
 	trans_pcie->rx_buf_size_8k = trans_cfg->rx_buf_size_8k;
 	if (trans_pcie->rx_buf_size_8k)
@@ -2017,7 +2005,9 @@ static ssize_t iwl_dbgfs_fw_restart_write(struct file *file,
 	if (!trans->op_mode)
 		return -EAGAIN;
 
+	local_bh_disable();
 	iwl_op_mode_nic_error(trans->op_mode);
+	local_bh_enable();
 
 	return count;
 }
@@ -2138,13 +2128,14 @@ struct iwl_trans *iwl_trans_pcie_alloc(struct pci_dev *pdev,
 
 	err = pci_request_regions(pdev, DRV_NAME);
 	if (err) {
-		dev_printk(KERN_ERR, &pdev->dev, "pci_request_regions failed");
+		dev_printk(KERN_ERR, &pdev->dev,
+			   "pci_request_regions failed\n");
 		goto out_pci_disable_device;
 	}
 
 	trans_pcie->hw_base = pci_ioremap_bar(pdev, 0);
 	if (!trans_pcie->hw_base) {
-		dev_printk(KERN_ERR, &pdev->dev, "pci_ioremap_bar failed");
+		dev_printk(KERN_ERR, &pdev->dev, "pci_ioremap_bar failed\n");
 		err = -ENODEV;
 		goto out_pci_release_regions;
 	}
@@ -2165,7 +2156,7 @@ struct iwl_trans *iwl_trans_pcie_alloc(struct pci_dev *pdev,
 	err = pci_enable_msi(pdev);
 	if (err)
 		dev_printk(KERN_ERR, &pdev->dev,
-			   "pci_enable_msi failed(0X%x)", err);
+			   "pci_enable_msi failed(0X%x)\n", err);
 
 	trans->dev = &pdev->dev;
 	trans_pcie->irq = pdev->irq;

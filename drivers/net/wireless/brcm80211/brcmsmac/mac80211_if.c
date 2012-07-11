@@ -319,8 +319,7 @@ static void brcms_ops_stop(struct ieee80211_hw *hw)
 		return;
 
 	spin_lock_bh(&wl->lock);
-	status = brcms_c_chipmatch(wl->wlc->hw->vendorid,
-				   wl->wlc->hw->deviceid);
+	status = brcms_c_chipmatch(wl->wlc->hw->d11core);
 	spin_unlock_bh(&wl->lock);
 	if (!status) {
 		wiphy_err(wl->wiphy,
@@ -1049,6 +1048,8 @@ static struct brcms_info *brcms_attach(struct bcma_device *pdev)
 			  __func__);
 		goto fail;
 	}
+
+	brcms_c_regd_init(wl->wlc);
 
 	memcpy(perm, &wl->pub->cur_etheraddr, ETH_ALEN);
 	if (WARN_ON(!is_valid_ether_addr(perm)))

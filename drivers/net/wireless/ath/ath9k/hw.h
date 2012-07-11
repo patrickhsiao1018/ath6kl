@@ -48,6 +48,7 @@
 #define AR9300_DEVID_AR9580	0x0033
 #define AR9300_DEVID_AR9462	0x0034
 #define AR9300_DEVID_AR9330	0x0035
+#define AR9300_DEVID_QCA955X	0x0038
 
 #define AR5416_AR9100_DEVID	0x000b
 
@@ -818,6 +819,7 @@ struct ath_hw {
 	struct ar5416IniArray iniModesFastClock;
 	struct ar5416IniArray iniAdditional;
 	struct ar5416IniArray iniModesRxGain;
+	struct ar5416IniArray ini_modes_rx_gain_bounds;
 	struct ar5416IniArray iniModesTxGain;
 	struct ar5416IniArray iniCckfirNormal;
 	struct ar5416IniArray iniCckfirJapan2484;
@@ -1019,16 +1021,8 @@ void ar9002_hw_attach_ops(struct ath_hw *ah);
 void ar9003_hw_attach_ops(struct ath_hw *ah);
 
 void ar9002_hw_load_ani_reg(struct ath_hw *ah, struct ath9k_channel *chan);
-/*
- * ANI work can be shared between all families but a next
- * generation implementation of ANI will be used only for AR9003 only
- * for now as the other families still need to be tested with the same
- * next generation ANI. Feel free to start testing it though for the
- * older families (AR5008, AR9001, AR9002) by using modparam_force_new_ani.
- */
-extern int modparam_force_new_ani;
+
 void ath9k_ani_reset(struct ath_hw *ah, bool is_scanning);
-void ath9k_hw_proc_mib_event(struct ath_hw *ah);
 void ath9k_hw_ani_monitor(struct ath_hw *ah, struct ath9k_channel *chan);
 
 #ifdef CONFIG_ATH9K_BTCOEX_SUPPORT
@@ -1038,7 +1032,8 @@ static inline bool ath9k_hw_btcoex_is_enabled(struct ath_hw *ah)
 }
 static inline bool ath9k_hw_mci_is_enabled(struct ath_hw *ah)
 {
-	return ah->btcoex_hw.enabled && (ah->caps.hw_caps & ATH9K_HW_CAP_MCI);
+	return ah->common.btcoex_enabled &&
+	       (ah->caps.hw_caps & ATH9K_HW_CAP_MCI);
 
 }
 void ath9k_hw_btcoex_enable(struct ath_hw *ah);

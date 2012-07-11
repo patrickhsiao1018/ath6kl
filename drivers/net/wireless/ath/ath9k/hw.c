@@ -342,6 +342,9 @@ static void ath9k_hw_read_revisions(struct ath_hw *ah)
 		val = REG_READ(ah, AR_SREV);
 		ah->hw_version.macRev = MS(val, AR_SREV_REVISION2);
 		return;
+	case AR9300_DEVID_QCA955X:
+		ah->hw_version.macVersion = AR_SREV_VERSION_9550;
+		return;
 	}
 
 	val = REG_READ(ah, AR_SREV) & AR_SREV_ID;
@@ -614,7 +617,7 @@ static int __ath9k_hw_init(struct ath_hw *ah)
 
 	if (NR_CPUS > 1 && ah->config.serialize_regmode == SER_REG_MODE_AUTO) {
 		if (ah->hw_version.macVersion == AR_SREV_VERSION_5416_PCI ||
-		    ((AR_SREV_9160(ah) || AR_SREV_9280(ah)) &&
+		    ((AR_SREV_9160(ah) || AR_SREV_9280(ah) || AR_SREV_9287(ah)) &&
 		     !ah->is_pciexpress)) {
 			ah->config.serialize_regmode =
 				SER_REG_MODE_ON;
@@ -646,6 +649,7 @@ static int __ath9k_hw_init(struct ath_hw *ah)
 	case AR_SREV_VERSION_9485:
 	case AR_SREV_VERSION_9340:
 	case AR_SREV_VERSION_9462:
+	case AR_SREV_VERSION_9550:
 		break;
 	default:
 		ath_err(common,
@@ -655,7 +659,7 @@ static int __ath9k_hw_init(struct ath_hw *ah)
 	}
 
 	if (AR_SREV_9271(ah) || AR_SREV_9100(ah) || AR_SREV_9340(ah) ||
-	    AR_SREV_9330(ah))
+	    AR_SREV_9330(ah) || AR_SREV_9550(ah))
 		ah->is_pciexpress = false;
 
 	ah->hw_version.phyRev = REG_READ(ah, AR_PHY_CHIP_ID);
@@ -727,6 +731,7 @@ int ath9k_hw_init(struct ath_hw *ah)
 	case AR9300_DEVID_AR9485_PCIE:
 	case AR9300_DEVID_AR9330:
 	case AR9300_DEVID_AR9340:
+	case AR9300_DEVID_QCA955X:
 	case AR9300_DEVID_AR9580:
 	case AR9300_DEVID_AR9462:
 		break;
@@ -773,12 +778,24 @@ static void ath9k_hw_init_qos(struct ath_hw *ah)
 
 u32 ar9003_get_pll_sqsum_dvc(struct ath_hw *ah)
 {
+	struct ath_common *common = ath9k_hw_common(ah);
+	int i = 0;
+
 	REG_CLR_BIT(ah, PLL3, PLL3_DO_MEAS_MASK);
 	udelay(100);
 	REG_SET_BIT(ah, PLL3, PLL3_DO_MEAS_MASK);
 
-	while ((REG_READ(ah, PLL4) & PLL4_MEAS_DONE) == 0)
+	while ((REG_READ(ah, PLL4) & PLL4_MEAS_DONE) == 0) {
+
 		udelay(100);
+
+		if (WARN_ON_ONCE(i >= 100)) {
+			ath_err(common, "PLL4 meaurement not done\n");
+			break;
+		}
+
+		i++;
+	}
 
 	return (REG_READ(ah, PLL3) & SQSUM_DVC_MASK) >> 3;
 }
@@ -853,7 +870,7 @@ static void ath9k_hw_init_pll(struct ath_hw *ah,
 		/* program BB PLL phase_shift */
 		REG_RMW_FIELD(ah, AR_CH0_BB_DPLL3,
 			      AR_CH0_BB_DPLL3_PHASE_SHIFT, 0x1);
-	} else if (AR_SREV_9340(ah)) {
+	} else if (AR_SREV_9340(ah) || AR_SREV_9550(ah)) {
 		u32 regval, pll2_divint, pll2_divfrac, refdiv;
 
 		REG_WRITE(ah, AR_RTC_PLL_CONTROL, 0x1142c);
@@ -867,9 +884,15 @@ static void ath9k_hw_init_pll(struct ath_hw *ah,
 			pll2_divfrac = 0x1eb85;
 			refdiv = 3;
 		} else {
-			pll2_divint = 88;
-			pll2_divfrac = 0;
-			refdiv = 5;
+			if (AR_SREV_9340(ah)) {
+				pll2_divint = 88;
+				pll2_divfrac = 0;
+				refdiv = 5;
+			} else {
+				pll2_divint = 0x11;
+				pll2_divfrac = 0x26666;
+				refdiv = 1;
+			}
 		}
 
 		regval = REG_READ(ah, AR_PHY_PLL_MODE);
@@ -882,8 +905,12 @@ static void ath9k_hw_init_pll(struct ath_hw *ah,
 		udelay(100);
 
 		regval = REG_READ(ah, AR_PHY_PLL_MODE);
-		regval = (regval & 0x80071fff) | (0x1 << 30) | (0x1 << 13) |
-			 (0x4 << 26) | (0x18 << 19);
+		if (AR_SREV_9340(ah))
+			regval = (regval & 0x80071fff) | (0x1 << 30) |
+				 (0x1 << 13) | (0x4 << 26) | (0x18 << 19);
+		else
+			regval = (regval & 0x80071fff) | (0x3 << 30) |
+				 (0x1 << 13) | (0x4 << 26) | (0x60 << 19);
 		REG_WRITE(ah, AR_PHY_PLL_MODE, regval);
 		REG_WRITE(ah, AR_PHY_PLL_MODE,
 			  REG_READ(ah, AR_PHY_PLL_MODE) & 0xfffeffff);
@@ -894,7 +921,8 @@ static void ath9k_hw_init_pll(struct ath_hw *ah,
 
 	REG_WRITE(ah, AR_RTC_PLL_CONTROL, pll);
 
-	if (AR_SREV_9485(ah) || AR_SREV_9340(ah) || AR_SREV_9330(ah))
+	if (AR_SREV_9485(ah) || AR_SREV_9340(ah) || AR_SREV_9330(ah) ||
+	    AR_SREV_9550(ah))
 		udelay(1000);
 
 	/* Switch the core clock for ar9271 to 117Mhz */
@@ -907,7 +935,7 @@ static void ath9k_hw_init_pll(struct ath_hw *ah,
 
 	REG_WRITE(ah, AR_RTC_SLEEP_CLK, AR_RTC_FORCE_DERIVED_CLK);
 
-	if (AR_SREV_9340(ah)) {
+	if (AR_SREV_9340(ah) || AR_SREV_9550(ah)) {
 		if (ah->is_clk_25mhz) {
 			REG_WRITE(ah, AR_RTC_DERIVED_CLK, 0x17c << 1);
 			REG_WRITE(ah, AR_SLP32_MODE, 0x0010f3d7);
@@ -931,7 +959,7 @@ static void ath9k_hw_init_interrupt_masks(struct ath_hw *ah,
 		AR_IMR_RXORN |
 		AR_IMR_BCNMISC;
 
-	if (AR_SREV_9340(ah))
+	if (AR_SREV_9340(ah) || AR_SREV_9550(ah))
 		sync_default &= ~AR_INTR_SYNC_HOST1_FATAL;
 
 	if (AR_SREV_9300_20_OR_LATER(ah)) {
@@ -1937,9 +1965,6 @@ int ath9k_hw_reset(struct ath_hw *ah, struct ath9k_channel *chan,
 	if (!ath9k_hw_init_cal(ah, chan))
 		return -EIO;
 
-	ath9k_hw_loadnf(ah, chan);
-	ath9k_hw_start_nfcal(ah, true);
-
 	if (ath9k_hw_mci_is_enabled(ah) && ar9003_mci_end_reset(ah, chan, caldata))
 		return -EIO;
 
@@ -1975,7 +2000,8 @@ int ath9k_hw_reset(struct ath_hw *ah, struct ath9k_channel *chan,
 				REG_WRITE(ah, AR_CFG, AR_CFG_SWTD | AR_CFG_SWRD);
 		}
 #ifdef __BIG_ENDIAN
-		else if (AR_SREV_9330(ah) || AR_SREV_9340(ah))
+		else if (AR_SREV_9330(ah) || AR_SREV_9340(ah) ||
+			 AR_SREV_9550(ah))
 			REG_RMW(ah, AR_CFG, AR_CFG_SWRB | AR_CFG_SWTB, 0);
 		else
 			REG_WRITE(ah, AR_CFG, AR_CFG_SWTD | AR_CFG_SWRD);
@@ -1987,6 +2013,9 @@ int ath9k_hw_reset(struct ath_hw *ah, struct ath9k_channel *chan,
 
 	if (ath9k_hw_mci_is_enabled(ah))
 		ar9003_mci_check_bt(ah);
+
+	ath9k_hw_loadnf(ah, chan);
+	ath9k_hw_start_nfcal(ah, true);
 
 	if (AR_SREV_9300_20_OR_LATER(ah)) {
 		ar9003_hw_bb_watchdog_config(ah);
@@ -3125,6 +3154,7 @@ static struct {
 	{ AR_SREV_VERSION_9340,		"9340" },
 	{ AR_SREV_VERSION_9485,         "9485" },
 	{ AR_SREV_VERSION_9462,         "9462" },
+	{ AR_SREV_VERSION_9550,         "9550" },
 };
 
 /* For devices with external radios */

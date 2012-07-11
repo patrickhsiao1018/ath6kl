@@ -19,7 +19,7 @@
 #include "ath9k.h"
 #include "btcoex.h"
 
-static u8 parse_mpdudensity(u8 mpdudensity)
+u8 ath9k_parse_mpdudensity(u8 mpdudensity)
 {
 	/*
 	 * 802.11n D2.0 defined values for "Minimum MPDU Start Spacing":
@@ -130,6 +130,8 @@ void ath9k_ps_restore(struct ath_softc *sc)
 				     PS_WAIT_FOR_PSPOLL_DATA |
 				     PS_WAIT_FOR_TX_ACK))) {
 		mode = ATH9K_PM_NETWORK_SLEEP;
+		if (ath9k_hw_btcoex_is_enabled(sc->sc_ah))
+			ath9k_btcoex_stop_gen_timer(sc);
 	} else {
 		goto unlock;
 	}
@@ -150,8 +152,10 @@ static void __ath_cancel_work(struct ath_softc *sc)
 	cancel_work_sync(&sc->hw_check_work);
 	cancel_delayed_work_sync(&sc->tx_complete_work);
 	cancel_delayed_work_sync(&sc->hw_pll_work);
+
 #ifdef CONFIG_ATH9K_BTCOEX_SUPPORT
-	cancel_work_sync(&sc->mci_work);
+	if (ath9k_hw_mci_is_enabled(sc->sc_ah))
+		cancel_work_sync(&sc->mci_work);
 #endif
 }
 
@@ -167,7 +171,8 @@ static void ath_restart_work(struct ath_softc *sc)
 
 	ieee80211_queue_delayed_work(sc->hw, &sc->tx_complete_work, 0);
 
-	if (AR_SREV_9485(sc->sc_ah) || AR_SREV_9340(sc->sc_ah))
+	if (AR_SREV_9340(sc->sc_ah) || AR_SREV_9485(sc->sc_ah) ||
+	    AR_SREV_9550(sc->sc_ah))
 		ieee80211_queue_delayed_work(sc->hw, &sc->hw_pll_work,
 				     msecs_to_jiffies(ATH_PLL_WORK_INTERVAL));
 
@@ -320,6 +325,7 @@ static void ath_node_attach(struct ath_softc *sc, struct ieee80211_sta *sta,
 			    struct ieee80211_vif *vif)
 {
 	struct ath_node *an;
+	u8 density;
 	an = (struct ath_node *)sta->drv_priv;
 
 #ifdef CONFIG_ATH9K_DEBUGFS
@@ -334,7 +340,8 @@ static void ath_node_attach(struct ath_softc *sc, struct ieee80211_sta *sta,
 		ath_tx_node_init(sc, an);
 		an->maxampdu = 1 << (IEEE80211_HT_MAX_AMPDU_FACTOR +
 				     sta->ht_cap.ampdu_factor);
-		an->mpdudensity = parse_mpdudensity(sta->ht_cap.ampdu_density);
+		density = ath9k_parse_mpdudensity(sta->ht_cap.ampdu_density);
+		an->mpdudensity = density;
 	}
 }
 
@@ -516,24 +523,6 @@ irqreturn_t ath_isr(int irq, void *dev)
 		ath9k_hw_set_interrupts(ah);
 	}
 
-	if (status & ATH9K_INT_MIB) {
-		/*
-		 * Disable interrupts until we service the MIB
-		 * interrupt; otherwise it will continue to
-		 * fire.
-		 */
-		ath9k_hw_disable_interrupts(ah);
-		/*
-		 * Let the hal handle the event. We assume
-		 * it will clear whatever condition caused
-		 * the interrupt.
-		 */
-		spin_lock(&common->cc_lock);
-		ath9k_hw_proc_mib_event(ah);
-		spin_unlock(&common->cc_lock);
-		ath9k_hw_enable_interrupts(ah);
-	}
-
 	if (!(ah->caps.hw_caps & ATH9K_HW_CAP_AUTOSLEEP))
 		if (status & ATH9K_INT_TIM_TIMER) {
 			if (ATH_DBG_WARN_ON_ONCE(sc->ps_idle))
@@ -680,8 +669,6 @@ static int ath9k_start(struct ieee80211_hw *hw)
 
 	spin_unlock_bh(&sc->sc_pcu_lock);
 
-	ath9k_start_btcoex(sc);
-
 	if (ah->caps.pcie_lcr_extsync_en && common->bus_ops->extn_synch_en)
 		common->bus_ops->extn_synch_en(common);
 
@@ -787,8 +774,6 @@ static void ath9k_stop(struct ieee80211_hw *hw)
 
 	/* Ensure HW is awake when we try to shut it down. */
 	ath9k_ps_wakeup(sc);
-
-	ath9k_stop_btcoex(sc);
 
 	spin_lock_bh(&sc->sc_pcu_lock);
 
@@ -959,14 +944,10 @@ static void ath9k_calculate_summary_state(struct ieee80211_hw *hw,
 	/*
 	 * Enable MIB interrupts when there are hardware phy counters.
 	 */
-	if ((iter_data.nstations + iter_data.nadhocs + iter_data.nmeshes) > 0) {
-		if (ah->config.enable_ani)
-			ah->imask |= ATH9K_INT_MIB;
+	if ((iter_data.nstations + iter_data.nadhocs + iter_data.nmeshes) > 0)
 		ah->imask |= ATH9K_INT_TSFOOR;
-	} else {
-		ah->imask &= ~ATH9K_INT_MIB;
+	else
 		ah->imask &= ~ATH9K_INT_TSFOOR;
-	}
 
 	ath9k_hw_set_interrupts(ah);
 
@@ -1157,14 +1138,17 @@ static int ath9k_config(struct ieee80211_hw *hw, u32 changed)
 
 	if (changed & IEEE80211_CONF_CHANGE_IDLE) {
 		sc->ps_idle = !!(conf->flags & IEEE80211_CONF_IDLE);
-		if (sc->ps_idle)
+		if (sc->ps_idle) {
 			ath_cancel_work(sc);
-		else
+			ath9k_stop_btcoex(sc);
+		} else {
+			ath9k_start_btcoex(sc);
 			/*
 			 * The chip needs a reset to properly wake up from
 			 * full sleep
 			 */
 			reset_channel = ah->chip_fullsleep;
+		}
 	}
 
 	/*

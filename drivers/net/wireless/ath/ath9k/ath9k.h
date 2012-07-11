@@ -214,6 +214,7 @@ struct ath_frame_info {
 	enum ath9k_key_type keytype;
 	u8 keyix;
 	u8 retries;
+	u8 rtscts_rate;
 };
 
 struct ath_buf_state {
@@ -480,6 +481,7 @@ void ath9k_btcoex_timer_resume(struct ath_softc *sc);
 void ath9k_btcoex_timer_pause(struct ath_softc *sc);
 void ath9k_btcoex_handle_interrupt(struct ath_softc *sc, u32 status);
 u16 ath9k_btcoex_aggr_limit(struct ath_softc *sc, u32 max_4ms_framelen);
+void ath9k_btcoex_stop_gen_timer(struct ath_softc *sc);
 #else
 static inline int ath9k_init_btcoex(struct ath_softc *sc)
 {
@@ -502,6 +504,9 @@ static inline u16 ath9k_btcoex_aggr_limit(struct ath_softc *sc,
 					  u32 max_4ms_framelen)
 {
 	return 0;
+}
+static inline void ath9k_btcoex_stop_gen_timer(struct ath_softc *sc)
+{
 }
 #endif /* CONFIG_ATH9K_BTCOEX_SUPPORT */
 
@@ -721,6 +726,7 @@ extern int ath9k_modparam_nohwcrypt;
 extern int led_blink;
 extern bool is_ath9k_unloaded;
 
+u8 ath9k_parse_mpdudensity(u8 mpdudensity);
 irqreturn_t ath_isr(int irq, void *dev);
 int ath9k_init_device(u16 devid, struct ath_softc *sc,
 		    const struct ath_bus_ops *bus_ops);

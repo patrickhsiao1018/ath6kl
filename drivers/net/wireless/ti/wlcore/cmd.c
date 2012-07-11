@@ -39,6 +39,7 @@
 #include "hw_ops.h"
 
 #define WL1271_CMD_FAST_POLL_COUNT       50
+#define WL1271_WAIT_EVENT_FAST_POLL_COUNT 20
 
 /*
  * send command to firmware
@@ -65,17 +66,24 @@ int wl1271_cmd_send(struct wl1271 *wl, u16 id, void *buf, size_t len,
 	WARN_ON(len % 4 != 0);
 	WARN_ON(test_bit(WL1271_FLAG_IN_ELP, &wl->flags));
 
-	wl1271_write(wl, wl->cmd_box_addr, buf, len, false);
+	ret = wlcore_write(wl, wl->cmd_box_addr, buf, len, false);
+	if (ret < 0)
+		goto fail;
 
 	/*
 	 * TODO: we just need this because one bit is in a different
 	 * place.  Is there any better way?
 	 */
-	wl->ops->trigger_cmd(wl, wl->cmd_box_addr, buf, len);
+	ret = wl->ops->trigger_cmd(wl, wl->cmd_box_addr, buf, len);
+	if (ret < 0)
+		goto fail;
 
 	timeout = jiffies + msecs_to_jiffies(WL1271_COMMAND_TIMEOUT);
 
-	intr = wlcore_read_reg(wl, REG_INTERRUPT_NO_CLEAR);
+	ret = wlcore_read_reg(wl, REG_INTERRUPT_NO_CLEAR, &intr);
+	if (ret < 0)
+		goto fail;
+
 	while (!(intr & WL1271_ACX_INTR_CMD_COMPLETE)) {
 		if (time_after(jiffies, timeout)) {
 			wl1271_error("command complete timeout");
@@ -89,13 +97,18 @@ int wl1271_cmd_send(struct wl1271 *wl, u16 id, void *buf, size_t len,
 		else
 			msleep(1);
 
-		intr = wlcore_read_reg(wl, REG_INTERRUPT_NO_CLEAR);
+		ret = wlcore_read_reg(wl, REG_INTERRUPT_NO_CLEAR, &intr);
+		if (ret < 0)
+			goto fail;
 	}
 
 	/* read back the status code of the command */
 	if (res_len == 0)
 		res_len = sizeof(struct wl1271_cmd_header);
-	wl1271_read(wl, wl->cmd_box_addr, cmd, res_len, false);
+
+	ret = wlcore_read(wl, wl->cmd_box_addr, cmd, res_len, false);
+	if (ret < 0)
+		goto fail;
 
 	status = le16_to_cpu(cmd->status);
 	if (status != CMD_STATUS_SUCCESS) {
@@ -104,11 +117,14 @@ int wl1271_cmd_send(struct wl1271 *wl, u16 id, void *buf, size_t len,
 		goto fail;
 	}
 
-	wlcore_write_reg(wl, REG_INTERRUPT_ACK, WL1271_ACX_INTR_CMD_COMPLETE);
+	ret = wlcore_write_reg(wl, REG_INTERRUPT_ACK,
+			       WL1271_ACX_INTR_CMD_COMPLETE);
+	if (ret < 0)
+		goto fail;
+
 	return 0;
 
 fail:
-	WARN_ON(1);
 	wl12xx_queue_recovery_work(wl);
 	return ret;
 }
@@ -117,35 +133,50 @@ fail:
  * Poll the mailbox event field until any of the bits in the mask is set or a
  * timeout occurs (WL1271_EVENT_TIMEOUT in msecs)
  */
-static int wl1271_cmd_wait_for_event_or_timeout(struct wl1271 *wl, u32 mask)
+static int wl1271_cmd_wait_for_event_or_timeout(struct wl1271 *wl,
+						u32 mask, bool *timeout)
 {
 	u32 *events_vector;
 	u32 event;
-	unsigned long timeout;
+	unsigned long timeout_time;
+	u16 poll_count = 0;
 	int ret = 0;
+
+	*timeout = false;
 
 	events_vector = kmalloc(sizeof(*events_vector), GFP_KERNEL | GFP_DMA);
 	if (!events_vector)
 		return -ENOMEM;
 
-	timeout = jiffies + msecs_to_jiffies(WL1271_EVENT_TIMEOUT);
+	timeout_time = jiffies + msecs_to_jiffies(WL1271_EVENT_TIMEOUT);
 
 	do {
-		if (time_after(jiffies, timeout)) {
+		if (time_after(jiffies, timeout_time)) {
 			wl1271_debug(DEBUG_CMD, "timeout waiting for event %d",
 				     (int)mask);
-			ret = -ETIMEDOUT;
+			*timeout = true;
 			goto out;
 		}
 
-		msleep(1);
+		poll_count++;
+		if (poll_count < WL1271_WAIT_EVENT_FAST_POLL_COUNT)
+			usleep_range(50, 51);
+		else
+			usleep_range(1000, 5000);
 
 		/* read from both event fields */
-		wl1271_read(wl, wl->mbox_ptr[0], events_vector,
-			    sizeof(*events_vector), false);
+		ret = wlcore_read(wl, wl->mbox_ptr[0], events_vector,
+				  sizeof(*events_vector), false);
+		if (ret < 0)
+			goto out;
+
 		event = *events_vector & mask;
-		wl1271_read(wl, wl->mbox_ptr[1], events_vector,
-			    sizeof(*events_vector), false);
+
+		ret = wlcore_read(wl, wl->mbox_ptr[1], events_vector,
+				  sizeof(*events_vector), false);
+		if (ret < 0)
+			goto out;
+
 		event |= *events_vector & mask;
 	} while (!event);
 
@@ -157,9 +188,10 @@ out:
 static int wl1271_cmd_wait_for_event(struct wl1271 *wl, u32 mask)
 {
 	int ret;
+	bool timeout = false;
 
-	ret = wl1271_cmd_wait_for_event_or_timeout(wl, mask);
-	if (ret != 0) {
+	ret = wl1271_cmd_wait_for_event_or_timeout(wl, mask, &timeout);
+	if (ret != 0 || timeout) {
 		wl12xx_queue_recovery_work(wl);
 		return ret;
 	}
@@ -981,12 +1013,14 @@ out:
 int wl12xx_cmd_build_probe_req(struct wl1271 *wl, struct wl12xx_vif *wlvif,
 			       u8 role_id, u8 band,
 			       const u8 *ssid, size_t ssid_len,
-			       const u8 *ie, size_t ie_len)
+			       const u8 *ie, size_t ie_len, bool sched_scan)
 {
 	struct ieee80211_vif *vif = wl12xx_wlvif_to_vif(wlvif);
 	struct sk_buff *skb;
 	int ret;
 	u32 rate;
+	u16 template_id_2_4 = CMD_TEMPL_CFG_PROBE_REQ_2_4;
+	u16 template_id_5 = CMD_TEMPL_CFG_PROBE_REQ_5;
 
 	skb = ieee80211_probereq_get(wl->hw, vif, ssid, ssid_len,
 				     ie, ie_len);
@@ -997,14 +1031,20 @@ int wl12xx_cmd_build_probe_req(struct wl1271 *wl, struct wl12xx_vif *wlvif,
 
 	wl1271_dump(DEBUG_SCAN, "PROBE REQ: ", skb->data, skb->len);
 
+	if (!sched_scan &&
+	    (wl->quirks & WLCORE_QUIRK_DUAL_PROBE_TMPL)) {
+		template_id_2_4 = CMD_TEMPL_APP_PROBE_REQ_2_4;
+		template_id_5 = CMD_TEMPL_APP_PROBE_REQ_5;
+	}
+
 	rate = wl1271_tx_min_rate_get(wl, wlvif->bitrate_masks[band]);
 	if (band == IEEE80211_BAND_2GHZ)
 		ret = wl1271_cmd_template_set(wl, role_id,
-					      CMD_TEMPL_CFG_PROBE_REQ_2_4,
+					      template_id_2_4,
 					      skb->data, skb->len, 0, rate);
 	else
 		ret = wl1271_cmd_template_set(wl, role_id,
-					      CMD_TEMPL_CFG_PROBE_REQ_5,
+					      template_id_5,
 					      skb->data, skb->len, 0, rate);
 
 out:
@@ -1412,6 +1452,7 @@ int wl12xx_cmd_remove_peer(struct wl1271 *wl, u8 hlid)
 {
 	struct wl12xx_cmd_remove_peer *cmd;
 	int ret;
+	bool timeout = false;
 
 	wl1271_debug(DEBUG_CMD, "cmd remove peer %d", (int)hlid);
 
@@ -1432,12 +1473,16 @@ int wl12xx_cmd_remove_peer(struct wl1271 *wl, u8 hlid)
 		goto out_free;
 	}
 
+	ret = wl1271_cmd_wait_for_event_or_timeout(wl,
+					   PEER_REMOVE_COMPLETE_EVENT_ID,
+					   &timeout);
 	/*
 	 * We are ok with a timeout here. The event is sometimes not sent
-	 * due to a firmware bug.
+	 * due to a firmware bug. In case of another error (like SDIO timeout)
+	 * queue a recovery.
 	 */
-	wl1271_cmd_wait_for_event_or_timeout(wl,
-					     PEER_REMOVE_COMPLETE_EVENT_ID);
+	if (ret)
+		wl12xx_queue_recovery_work(wl);
 
 out_free:
 	kfree(cmd);
@@ -1754,7 +1799,9 @@ int wl12xx_stop_dev(struct wl1271 *wl, struct wl12xx_vif *wlvif)
 		return -EINVAL;
 
 	/* flush all pending packets */
-	wl1271_tx_work_locked(wl);
+	ret = wlcore_tx_work_locked(wl);
+	if (ret < 0)
+		goto out;
 
 	if (test_bit(wlvif->dev_role_id, wl->roc_map)) {
 		ret = wl12xx_croc(wl, wlvif->dev_role_id);

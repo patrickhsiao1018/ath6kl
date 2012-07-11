@@ -70,11 +70,13 @@
  *
  * @IEEE80211_BAND_2GHZ: 2.4GHz ISM band
  * @IEEE80211_BAND_5GHZ: around 5GHz band (4.9-5.7)
+ * @IEEE80211_BAND_60GHZ: around 60 GHz band (58.32 - 64.80 GHz)
  * @IEEE80211_NUM_BANDS: number of defined bands
  */
 enum ieee80211_band {
 	IEEE80211_BAND_2GHZ = NL80211_BAND_2GHZ,
 	IEEE80211_BAND_5GHZ = NL80211_BAND_5GHZ,
+	IEEE80211_BAND_60GHZ = NL80211_BAND_60GHZ,
 
 	/* keep last */
 	IEEE80211_NUM_BANDS
@@ -211,6 +213,22 @@ struct ieee80211_sta_ht_cap {
 };
 
 /**
+ * struct ieee80211_sta_vht_cap - STA's VHT capabilities
+ *
+ * This structure describes most essential parameters needed
+ * to describe 802.11ac VHT capabilities for an STA.
+ *
+ * @vht_supported: is VHT supported by the STA
+ * @cap: VHT capabilities map as described in 802.11ac spec
+ * @vht_mcs: Supported VHT MCS rates
+ */
+struct ieee80211_sta_vht_cap {
+	bool vht_supported;
+	u32 cap; /* use IEEE80211_VHT_CAP_ */
+	struct ieee80211_vht_mcs_info vht_mcs;
+};
+
+/**
  * struct ieee80211_supported_band - frequency band definition
  *
  * This structure describes a frequency band a wiphy
@@ -233,6 +251,7 @@ struct ieee80211_supported_band {
 	int n_channels;
 	int n_bitrates;
 	struct ieee80211_sta_ht_cap ht_cap;
+	struct ieee80211_sta_vht_cap vht_cap;
 };
 
 /*
@@ -561,11 +580,13 @@ enum station_info_flags {
  * @RATE_INFO_FLAGS_MCS: @tx_bitrate_mcs filled
  * @RATE_INFO_FLAGS_40_MHZ_WIDTH: 40 Mhz width transmission
  * @RATE_INFO_FLAGS_SHORT_GI: 400ns guard interval
+ * @RATE_INFO_FLAGS_60G: 60gHz MCS
  */
 enum rate_info_flags {
 	RATE_INFO_FLAGS_MCS		= 1<<0,
 	RATE_INFO_FLAGS_40_MHZ_WIDTH	= 1<<1,
 	RATE_INFO_FLAGS_SHORT_GI	= 1<<2,
+	RATE_INFO_FLAGS_60G		= 1<<3,
 };
 
 /**
@@ -627,10 +648,10 @@ struct sta_bss_parameters {
  * @llid: mesh local link id
  * @plid: mesh peer link id
  * @plink_state: mesh peer link state
- * @signal: the signal strength, type depends on the wiphy's signal_type
-	NOTE: For CFG80211_SIGNAL_TYPE_MBM, value is expressed in _dBm_.
- * @signal_avg: avg signal strength, type depends on the wiphy's signal_type
-	NOTE: For CFG80211_SIGNAL_TYPE_MBM, value is expressed in _dBm_.
+ * @signal: The signal strength, type depends on the wiphy's signal_type.
+ *	For CFG80211_SIGNAL_TYPE_MBM, value is expressed in _dBm_.
+ * @signal_avg: Average signal strength, type depends on the wiphy's signal_type.
+ *	For CFG80211_SIGNAL_TYPE_MBM, value is expressed in _dBm_.
  * @txrate: current unicast bitrate from this station
  * @rxrate: current unicast bitrate to this station
  * @rx_packets: packets received from this station
@@ -790,43 +811,95 @@ struct bss_parameters {
 	int ht_opmode;
 };
 
-/*
+/**
  * struct mesh_config - 802.11s mesh configuration
  *
  * These parameters can be changed while the mesh is active.
+ *
+ * @dot11MeshRetryTimeout: the initial retry timeout in millisecond units used
+ *	by the Mesh Peering Open message
+ * @dot11MeshConfirmTimeout: the initial retry timeout in millisecond units
+ *	used by the Mesh Peering Open message
+ * @dot11MeshHoldingTimeout: the confirm timeout in millisecond units used by
+ *	the mesh peering management to close a mesh peering
+ * @dot11MeshMaxPeerLinks: the maximum number of peer links allowed on this
+ *	mesh interface
+ * @dot11MeshMaxRetries: the maximum number of peer link open retries that can
+ *	be sent to establish a new peer link instance in a mesh
+ * @dot11MeshTTL: the value of TTL field set at a source mesh STA
+ * @element_ttl: the value of TTL field set at a mesh STA for path selection
+ *	elements
+ * @auto_open_plinks: whether we should automatically open peer links when we
+ *	detect compatible mesh peers
+ * @dot11MeshNbrOffsetMaxNeighbor: the maximum number of neighbors to
+ *	synchronize to for 11s default synchronization method
+ * @dot11MeshHWMPmaxPREQretries: the number of action frames containing a PREQ
+ *	that an originator mesh STA can send to a particular path target
+ * @path_refresh_time: how frequently to refresh mesh paths in milliseconds
+ * @min_discovery_timeout: the minimum length of time to wait until giving up on
+ *	a path discovery in milliseconds
+ * @dot11MeshHWMPactivePathTimeout: the time (in TUs) for which mesh STAs
+ *	receiving a PREQ shall consider the forwarding information from the
+ *	root to be valid. (TU = time unit)
+ * @dot11MeshHWMPpreqMinInterval: the minimum interval of time (in TUs) during
+ *	which a mesh STA can send only one action frame containing a PREQ
+ *	element
+ * @dot11MeshHWMPperrMinInterval: the minimum interval of time (in TUs) during
+ *	which a mesh STA can send only one Action frame containing a PERR
+ *	element
+ * @dot11MeshHWMPnetDiameterTraversalTime: the interval of time (in TUs) that
+ *	it takes for an HWMP information element to propagate across the mesh
+ * @dot11MeshHWMPRootMode: the configuration of a mesh STA as root mesh STA
+ * @dot11MeshHWMPRannInterval: the interval of time (in TUs) between root
+ *	announcements are transmitted
+ * @dot11MeshGateAnnouncementProtocol: whether to advertise that this mesh
+ *	station has access to a broader network beyond the MBSS. (This is
+ *	missnamed in draft 12.0: dot11MeshGateAnnouncementProtocol set to true
+ *	only means that the station will announce others it's a mesh gate, but
+ *	not necessarily using the gate announcement protocol. Still keeping the
+ *	same nomenclature to be in sync with the spec)
+ * @dot11MeshForwarding: whether the Mesh STA is forwarding or non-forwarding
+ *	entity (default is TRUE - forwarding entity)
+ * @rssi_threshold: the threshold for average signal strength of candidate
+ *	station to establish a peer link
+ * @ht_opmode: mesh HT protection mode
+ *
+ * @dot11MeshHWMPactivePathToRootTimeout: The time (in TUs) for which mesh STAs
+ *	receiving a proactive PREQ shall consider the forwarding information to
+ *	the root mesh STA to be valid.
+ *
+ * @dot11MeshHWMProotInterval: The interval of time (in TUs) between proactive
+ *	PREQs are transmitted.
+ * @dot11MeshHWMPconfirmationInterval: The minimum interval of time (in TUs)
+ *	during which a mesh STA can send only one Action frame containing
+ *	a PREQ element for root path confirmation.
  */
 struct mesh_config {
-	/* Timeouts in ms */
-	/* Mesh plink management parameters */
 	u16 dot11MeshRetryTimeout;
 	u16 dot11MeshConfirmTimeout;
 	u16 dot11MeshHoldingTimeout;
 	u16 dot11MeshMaxPeerLinks;
-	u8  dot11MeshMaxRetries;
-	u8  dot11MeshTTL;
-	/* ttl used in path selection information elements */
-	u8  element_ttl;
+	u8 dot11MeshMaxRetries;
+	u8 dot11MeshTTL;
+	u8 element_ttl;
 	bool auto_open_plinks;
-	/* neighbor offset synchronization */
 	u32 dot11MeshNbrOffsetMaxNeighbor;
-	/* HWMP parameters */
-	u8  dot11MeshHWMPmaxPREQretries;
+	u8 dot11MeshHWMPmaxPREQretries;
 	u32 path_refresh_time;
 	u16 min_discovery_timeout;
 	u32 dot11MeshHWMPactivePathTimeout;
 	u16 dot11MeshHWMPpreqMinInterval;
 	u16 dot11MeshHWMPperrMinInterval;
 	u16 dot11MeshHWMPnetDiameterTraversalTime;
-	u8  dot11MeshHWMPRootMode;
+	u8 dot11MeshHWMPRootMode;
 	u16 dot11MeshHWMPRannInterval;
-	/* This is missnamed in draft 12.0: dot11MeshGateAnnouncementProtocol
-	 * set to true only means that the station will announce others it's a
-	 * mesh gate, but not necessarily using the gate announcement protocol.
-	 * Still keeping the same nomenclature to be in sync with the spec. */
-	bool  dot11MeshGateAnnouncementProtocol;
+	bool dot11MeshGateAnnouncementProtocol;
 	bool dot11MeshForwarding;
 	s32 rssi_threshold;
 	u16 ht_opmode;
+	u32 dot11MeshHWMPactivePathToRootTimeout;
+	u16 dot11MeshHWMProotInterval;
+	u16 dot11MeshHWMPconfirmationInterval;
 };
 
 /**
@@ -975,6 +1048,7 @@ struct cfg80211_match_set {
  * @wiphy: the wiphy this was for
  * @dev: the interface
  * @channels: channels to scan
+ * @rssi_thold: don't report scan results below this threshold (in s32 dBm)
  */
 struct cfg80211_sched_scan_request {
 	struct cfg80211_ssid *ssids;
@@ -985,6 +1059,7 @@ struct cfg80211_sched_scan_request {
 	size_t ie_len;
 	struct cfg80211_match_set *match_sets;
 	int n_match_sets;
+	s32 rssi_thold;
 
 	/* internal */
 	struct wiphy *wiphy;
@@ -1428,9 +1503,8 @@ struct cfg80211_gtk_rekey_data {
  *	interfaces are active this callback should reject the configuration.
  *	If no interfaces are active or the device is down, the channel should
  *	be stored for when a monitor interface becomes active.
- * @get_channel: Get the current operating channel, should return %NULL if
- *	there's no single defined operating channel if for example the
- *	device implements channel hopping for multi-channel virtual interfaces.
+ * @set_monitor_enabled: Notify driver that there are only monitor
+ *	interfaces running.
  *
  * @scan: Request to do a scan. If returning zero, the scan request is given
  *	the driver, and will be valid until passed to cfg80211_scan_done().
@@ -1737,15 +1811,14 @@ struct cfg80211_ops {
 				  struct net_device *dev,
 				  u16 noack_map);
 
-	struct ieee80211_channel *(*get_channel)(struct wiphy *wiphy,
-					       enum nl80211_channel_type *type);
-
 	int	(*get_et_sset_count)(struct wiphy *wiphy,
 				     struct net_device *dev, int sset);
 	void	(*get_et_stats)(struct wiphy *wiphy, struct net_device *dev,
 				struct ethtool_stats *stats, u64 *data);
 	void	(*get_et_strings)(struct wiphy *wiphy, struct net_device *dev,
 				  u32 sset, u8 *data);
+
+	void (*set_monitor_enabled)(struct wiphy *wiphy, bool enabled);
 };
 
 /*
@@ -2099,7 +2172,9 @@ struct wiphy {
 	char fw_version[ETHTOOL_BUSINFO_LEN];
 	u32 hw_version;
 
+#ifdef CONFIG_PM
 	struct wiphy_wowlan_support wowlan;
+#endif
 
 	u16 max_remain_on_channel_duration;
 
@@ -2334,6 +2409,11 @@ struct wireless_dev {
 	struct cfg80211_internal_bss *current_bss; /* associated / joined */
 	struct ieee80211_channel *preset_chan;
 	enum nl80211_channel_type preset_chantype;
+
+	/* for AP and mesh channel tracking */
+	struct ieee80211_channel *channel;
+
+	bool ibss_fixed;
 
 	bool ps;
 	int ps_timeout;
@@ -3409,7 +3489,7 @@ void cfg80211_ch_switch_notify(struct net_device *dev, int freq,
  *
  * return 0 if MCS index >= 32
  */
-u16 cfg80211_calculate_bitrate(struct rate_info *rate);
+u32 cfg80211_calculate_bitrate(struct rate_info *rate);
 
 /* Logging, debugging and troubleshooting/diagnostic helpers. */
 

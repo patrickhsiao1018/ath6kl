@@ -30,6 +30,7 @@
 #include <net/mac80211.h>
 #include "key.h"
 #include "sta_info.h"
+#include "debug.h"
 
 struct ieee80211_local;
 
@@ -55,11 +56,14 @@ struct ieee80211_local;
 #define TU_TO_JIFFIES(x)	(usecs_to_jiffies((x) * 1024))
 #define TU_TO_EXP_TIME(x)	(jiffies + TU_TO_JIFFIES(x))
 
+/*
+ * Some APs experience problems when working with U-APSD. Decrease the
+ * probability of that happening by using legacy mode for all ACs but VO.
+ * The AP that caused us trouble was a Cisco 4410N. It ignores our
+ * setting, and always treats non-VO ACs as legacy.
+ */
 #define IEEE80211_DEFAULT_UAPSD_QUEUES \
-	(IEEE80211_WMM_IE_STA_QOSINFO_AC_BK |	\
-	 IEEE80211_WMM_IE_STA_QOSINFO_AC_BE |	\
-	 IEEE80211_WMM_IE_STA_QOSINFO_AC_VI |	\
-	 IEEE80211_WMM_IE_STA_QOSINFO_AC_VO)
+	IEEE80211_WMM_IE_STA_QOSINFO_AC_VO
 
 #define IEEE80211_DEFAULT_MAX_SP_LEN		\
 	IEEE80211_WMM_IE_STA_QOSINFO_SP_ALL
@@ -508,6 +512,7 @@ struct ieee80211_if_ibss {
 	bool privacy;
 
 	bool control_port;
+	unsigned int auth_frame_registrations;
 
 	u8 bssid[ETH_ALEN] __aligned(2);
 	u8 ssid[IEEE80211_MAX_SSID_LEN];
@@ -676,6 +681,9 @@ struct ieee80211_sub_if_data {
 
 	/* TID bitmap for NoAck policy */
 	u16 noack_map;
+
+	/* bit field of ACM bits (BIT(802.1D tag)) */
+	u8 wmm_acm;
 
 	struct ieee80211_key __rcu *keys[NUM_DEFAULT_KEYS + NUM_DEFAULT_MGMT_KEYS];
 	struct ieee80211_key __rcu *default_unicast_key;
@@ -881,6 +889,9 @@ struct ieee80211_local {
 	/* device is started */
 	bool started;
 
+	/* device is during a HW reconfig */
+	bool in_reconfig;
+
 	/* wowlan is enabled -- don't reconfig on resume */
 	bool wowlan;
 
@@ -1019,7 +1030,6 @@ struct ieee80211_local {
 	int total_ps_buffered; /* total number of all buffered unicast and
 				* multicast packets for power saving stations
 				*/
-	unsigned int wmm_acm; /* bit field of ACM bits (BIT(802.1D tag)) */
 
 	bool pspolling;
 	bool offchannel_ps_enabled;
@@ -1274,7 +1284,6 @@ int ieee80211_if_change_type(struct ieee80211_sub_if_data *sdata,
 			     enum nl80211_iftype type);
 void ieee80211_if_remove(struct ieee80211_sub_if_data *sdata);
 void ieee80211_remove_interfaces(struct ieee80211_local *local);
-u32 __ieee80211_recalc_idle(struct ieee80211_local *local);
 void ieee80211_recalc_idle(struct ieee80211_local *local);
 void ieee80211_adjust_monitor_flags(struct ieee80211_sub_if_data *sdata,
 				    const int offset);
@@ -1471,6 +1480,16 @@ u8 *ieee80211_ie_build_ht_oper(u8 *pos, struct ieee80211_sta_ht_cap *ht_cap,
 			       struct ieee80211_channel *channel,
 			       enum nl80211_channel_type channel_type,
 			       u16 prot_mode);
+u8 *ieee80211_ie_build_vht_cap(u8 *pos, struct ieee80211_sta_vht_cap *vht_cap,
+			       u32 cap);
+int ieee80211_add_srates_ie(struct ieee80211_sub_if_data *sdata,
+			    struct sk_buff *skb, bool need_basic);
+int ieee80211_add_ext_srates_ie(struct ieee80211_sub_if_data *sdata,
+				struct sk_buff *skb, bool need_basic);
+
+/* virtual monitor */
+int ieee80211_add_virtual_monitor(struct ieee80211_local *local);
+void ieee80211_del_virtual_monitor(struct ieee80211_local *local);
 
 /* channel management */
 enum ieee80211_chan_mode {

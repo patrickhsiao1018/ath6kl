@@ -90,22 +90,6 @@
 
 #define IWL_NUM_SCAN_RATES         (2)
 
-/*
- * Minimum number of queues. MAX_NUM is defined in hw specific files.
- * Set the minimum to accommodate
- *  - 4 standard TX queues
- *  - the command queue
- *  - 4 PAN TX queues
- *  - the PAN multicast queue, and
- *  - the AUX (TX during scan dwell) queue.
- */
-#define IWL_MIN_NUM_QUEUES	11
-
-/*
- * Command queue depends on iPAN support.
- */
-#define IWL_DEFAULT_CMD_QUEUE_NUM	4
-#define IWL_IPAN_CMD_QUEUE_NUM		9
 
 #define IEEE80211_DATA_LEN              2304
 #define IEEE80211_4ADDR_LEN             30
@@ -568,7 +552,6 @@ enum iwl_scan_type {
  *
  * @tx_chains_num: Number of TX chains
  * @rx_chains_num: Number of RX chains
- * @sku: sku read from EEPROM
  * @ct_kill_threshold: temperature threshold - in hw dependent unit
  * @ct_kill_exit_threshold: when to reeable the device - in hw dependent unit
  *	relevant for 1000, 6000 and up
@@ -579,7 +562,6 @@ struct iwl_hw_params {
 	u8  tx_chains_num;
 	u8  rx_chains_num;
 	bool use_rts_for_aggregation;
-	u16 sku;
 	u32 ct_kill_threshold;
 	u32 ct_kill_exit_threshold;
 
