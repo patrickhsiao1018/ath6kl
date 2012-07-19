@@ -121,6 +121,9 @@ enum ath6kl_fw_capability {
 	/* FW sets mac_addr[4] ^= 0x80 for newly created interfaces */
 	ATH6KL_FW_CAPABILITY_CUSTOM_MAC_ADDR,
 
+	/* Firmware supports TX error rate notification */
+	ATH6KL_FW_CAPABILITY_TX_ERR_NOTIFY,
+
 	/* this needs to be last */
 	ATH6KL_FW_CAPABILITY_MAX,
 };
@@ -191,6 +194,13 @@ enum ath6kl_hw_flags {
 #define AR6004_HW_1_2_BOARD_DATA_FILE         AR6004_HW_1_2_FW_DIR "/bdata.bin"
 #define AR6004_HW_1_2_DEFAULT_BOARD_DATA_FILE \
 	AR6004_HW_1_2_FW_DIR "/bdata.bin"
+
+/* AR6004 1.3 definitions */
+#define AR6004_HW_1_3_VERSION			0x31c8088a
+#define AR6004_HW_1_3_FW_DIR			"ath6k/AR6004/hw1.3"
+#define AR6004_HW_1_3_FIRMWARE_FILE		"fw.ram.bin"
+#define AR6004_HW_1_3_BOARD_DATA_FILE		"ath6k/AR6004/hw1.3/bdata.bin"
+#define AR6004_HW_1_3_DEFAULT_BOARD_DATA_FILE	"ath6k/AR6004/hw1.3/bdata.bin"
 
 /* Per STA data, used in AP mode */
 #define STA_PS_AWAKE		BIT(0)
@@ -586,6 +596,7 @@ struct ath6kl_vif {
 	u16 assoc_bss_beacon_int;
 	u16 listen_intvl_t;
 	u16 bmiss_time_t;
+	u32 txe_intvl;
 	u16 bg_scan_period;
 	u8 assoc_bss_dtim_period;
 	struct net_device_stats net_stats;
@@ -594,6 +605,11 @@ struct ath6kl_vif {
 
 	struct list_head mc_filter;
 };
+
+static inline struct ath6kl_vif *ath6kl_vif_from_wdev(struct wireless_dev *wdev)
+{
+	return container_of(wdev, struct ath6kl_vif, wdev);
+}
 
 #define WOW_LIST_ID		0
 #define WOW_HOST_REQ_DELAY	500 /* ms */
