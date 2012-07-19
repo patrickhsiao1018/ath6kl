@@ -1042,6 +1042,11 @@ struct wmi_sta_bmiss_enhance_cmd {
 	u8 enable;
 } __packed;
 
+struct wmi_set_regdomain_cmd {
+	u8 length;
+	u8 iso_name[2];
+} __packed;
+
 /* WMI_SET_POWER_MODE_CMDID */
 enum wmi_power_mode {
 	REC_POWER = 0x01,
@@ -2547,11 +2552,6 @@ int ath6kl_wmi_connect_cmd(struct wmi *wmi, u8 if_idx,
 int ath6kl_wmi_reconnect_cmd(struct wmi *wmi, u8 if_idx, u8 *bssid,
 			     u16 channel);
 int ath6kl_wmi_disconnect_cmd(struct wmi *wmi, u8 if_idx);
-int ath6kl_wmi_startscan_cmd(struct wmi *wmi, u8 if_idx,
-			     enum wmi_scan_type scan_type,
-			     u32 force_fgscan, u32 is_legacy,
-			     u32 home_dwell_time, u32 force_scan_interval,
-			     s8 num_chan, u16 *ch_list);
 
 int ath6kl_wmi_beginscan_cmd(struct wmi *wmi, u8 if_idx,
 			     enum wmi_scan_type scan_type,
@@ -2645,6 +2645,7 @@ int ath6kl_wmi_add_del_mcast_filter_cmd(struct wmi *wmi, u8 if_idx,
 int ath6kl_wmi_sta_bmiss_enhance_cmd(struct wmi *wmi, u8 if_idx, bool enable);
 int ath6kl_wmi_set_txe_notify(struct wmi *wmi, u8 idx,
 			      u32 rate, u32 pkts, u32 intvl);
+int ath6kl_wmi_set_regdomain_cmd(struct wmi *wmi, const char *alpha2);
 
 /* AP mode uAPSD */
 int ath6kl_wmi_ap_set_apsd(struct wmi *wmi, u8 if_idx, u8 enable);

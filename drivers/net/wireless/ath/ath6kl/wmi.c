@@ -1895,6 +1895,59 @@ int ath6kl_wmi_disconnect_cmd(struct wmi *wmi, u8 if_idx)
 	return ret;
 }
 
+/* ath6kl_wmi_start_scan_cmd is to be deprecated. Use
+ * ath6kl_wmi_begin_scan_cmd instead. The new function supports P2P
+ * mgmt operations using station interface.
+ */
+static int ath6kl_wmi_startscan_cmd(struct wmi *wmi, u8 if_idx,
+				    enum wmi_scan_type scan_type,
+				    u32 force_fgscan, u32 is_legacy,
+				    u32 home_dwell_time,
+				    u32 force_scan_interval,
+				    s8 num_chan, u16 *ch_list)
+{
+	struct sk_buff *skb;
+	struct wmi_start_scan_cmd *sc;
+	s8 size;
+	int i, ret;
+
+	size = sizeof(struct wmi_start_scan_cmd);
+
+	if ((scan_type != WMI_LONG_SCAN) && (scan_type != WMI_SHORT_SCAN))
+		return -EINVAL;
+
+	if (num_chan > WMI_MAX_CHANNELS)
+		return -EINVAL;
+
+	if (num_chan)
+		size += sizeof(u16) * (num_chan - 1);
+
+	skb = ath6kl_wmi_get_new_buf(size);
+	if (!skb)
+		return -ENOMEM;
+
+	sc = (struct wmi_start_scan_cmd *) skb->data;
+	sc->scan_type = scan_type;
+	sc->force_fg_scan = cpu_to_le32(force_fgscan);
+	sc->is_legacy = cpu_to_le32(is_legacy);
+	sc->home_dwell_time = cpu_to_le32(home_dwell_time);
+	sc->force_scan_intvl = cpu_to_le32(force_scan_interval);
+	sc->num_ch = num_chan;
+
+	for (i = 0; i < num_chan; i++)
+		sc->ch_list[i] = cpu_to_le16(ch_list[i]);
+
+	ret = ath6kl_wmi_cmd_send(wmi, if_idx, skb, WMI_START_SCAN_CMDID,
+				  NO_SYNC_WMIFLAG);
+
+	return ret;
+}
+
+/*
+ * beginscan supports (compared to old startscan) P2P mgmt operations using
+ * station interface, send additional information like supported rates to
+ * advertise and xmit rates for probe requests
+ */
 int ath6kl_wmi_beginscan_cmd(struct wmi *wmi, u8 if_idx,
 			     enum wmi_scan_type scan_type,
 			     u32 force_fgscan, u32 is_legacy,
@@ -1909,6 +1962,15 @@ int ath6kl_wmi_beginscan_cmd(struct wmi *wmi, u8 if_idx,
 	struct ath6kl *ar = wmi->parent_dev;
 	int num_rates;
 	u32 ratemask;
+
+	if (!test_bit(ATH6KL_FW_CAPABILITY_STA_P2PDEV_DUPLEX,
+		      ar->fw_capabilities)) {
+		return ath6kl_wmi_startscan_cmd(wmi, if_idx,
+						scan_type, force_fgscan,
+						is_legacy, home_dwell_time,
+						force_scan_interval,
+						num_chan, ch_list);
+	}
 
 	size = sizeof(struct wmi_begin_scan_cmd);
 
@@ -1957,53 +2019,6 @@ int ath6kl_wmi_beginscan_cmd(struct wmi *wmi, u8 if_idx,
 		sc->ch_list[i] = cpu_to_le16(ch_list[i]);
 
 	ret = ath6kl_wmi_cmd_send(wmi, if_idx, skb, WMI_BEGIN_SCAN_CMDID,
-				  NO_SYNC_WMIFLAG);
-
-	return ret;
-}
-
-/* ath6kl_wmi_start_scan_cmd is to be deprecated. Use
- * ath6kl_wmi_begin_scan_cmd instead. The new function supports P2P
- * mgmt operations using station interface.
- */
-int ath6kl_wmi_startscan_cmd(struct wmi *wmi, u8 if_idx,
-			     enum wmi_scan_type scan_type,
-			     u32 force_fgscan, u32 is_legacy,
-			     u32 home_dwell_time, u32 force_scan_interval,
-			     s8 num_chan, u16 *ch_list)
-{
-	struct sk_buff *skb;
-	struct wmi_start_scan_cmd *sc;
-	s8 size;
-	int i, ret;
-
-	size = sizeof(struct wmi_start_scan_cmd);
-
-	if ((scan_type != WMI_LONG_SCAN) && (scan_type != WMI_SHORT_SCAN))
-		return -EINVAL;
-
-	if (num_chan > WMI_MAX_CHANNELS)
-		return -EINVAL;
-
-	if (num_chan)
-		size += sizeof(u16) * (num_chan - 1);
-
-	skb = ath6kl_wmi_get_new_buf(size);
-	if (!skb)
-		return -ENOMEM;
-
-	sc = (struct wmi_start_scan_cmd *) skb->data;
-	sc->scan_type = scan_type;
-	sc->force_fg_scan = cpu_to_le32(force_fgscan);
-	sc->is_legacy = cpu_to_le32(is_legacy);
-	sc->home_dwell_time = cpu_to_le32(home_dwell_time);
-	sc->force_scan_intvl = cpu_to_le32(force_scan_interval);
-	sc->num_ch = num_chan;
-
-	for (i = 0; i < num_chan; i++)
-		sc->ch_list[i] = cpu_to_le16(ch_list[i]);
-
-	ret = ath6kl_wmi_cmd_send(wmi, if_idx, skb, WMI_START_SCAN_CMDID,
 				  NO_SYNC_WMIFLAG);
 
 	return ret;
@@ -3199,6 +3214,23 @@ int ath6kl_wmi_sta_bmiss_enhance_cmd(struct wmi *wmi, u8 if_idx, bool enhance)
 				  WMI_STA_BMISS_ENHANCE_CMDID,
 				  NO_SYNC_WMIFLAG);
 	return ret;
+}
+
+int ath6kl_wmi_set_regdomain_cmd(struct wmi *wmi, const char *alpha2)
+{
+	struct sk_buff *skb;
+	struct wmi_set_regdomain_cmd *cmd;
+
+	skb = ath6kl_wmi_get_new_buf(sizeof(*cmd));
+	if (!skb)
+		return -ENOMEM;
+
+	cmd = (struct wmi_set_regdomain_cmd *) skb->data;
+	memcpy(cmd->iso_name, alpha2, 2);
+
+	return ath6kl_wmi_cmd_send(wmi, 0, skb,
+				   WMI_SET_REGDOMAIN_CMDID,
+				   NO_SYNC_WMIFLAG);
 }
 
 s32 ath6kl_wmi_get_rate(s8 rate_index)
