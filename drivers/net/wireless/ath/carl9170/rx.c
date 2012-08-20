@@ -161,7 +161,7 @@ static void carl9170_cmd_callback(struct ar9170 *ar, u32 len, void *buffer)
 
 void carl9170_handle_command_response(struct ar9170 *ar, void *buf, u32 len)
 {
-	struct carl9170_rsp *cmd = (void *) buf;
+	struct carl9170_rsp *cmd = buf;
 	struct ieee80211_vif *vif;
 
 	if (carl9170_check_sequence(ar, cmd->hdr.seq))
@@ -206,6 +206,7 @@ void carl9170_handle_command_response(struct ar9170 *ar, void *buf, u32 len)
 
 		case NL80211_IFTYPE_AP:
 		case NL80211_IFTYPE_ADHOC:
+		case NL80211_IFTYPE_MESH_POINT:
 			carl9170_update_beacon(ar, true);
 			break;
 
@@ -520,7 +521,7 @@ static u8 *carl9170_find_ie(u8 *data, unsigned int len, u8 ie)
  */
 static void carl9170_ps_beacon(struct ar9170 *ar, void *data, unsigned int len)
 {
-	struct ieee80211_hdr *hdr = (void *) data;
+	struct ieee80211_hdr *hdr = data;
 	struct ieee80211_tim_ie *tim_ie;
 	u8 *tim;
 	u8 tim_len;

@@ -133,13 +133,16 @@ bool mesh_peer_accepts_plinks(struct ieee802_11_elems *ie)
 }
 
 /**
- * mesh_accept_plinks_update: update accepting_plink in local mesh beacons
+ * mesh_accept_plinks_update - update accepting_plink in local mesh beacons
  *
  * @sdata: mesh interface in which mesh beacons are going to be updated
+ *
+ * Returns: beacon changed flag if the beacon content changed.
  */
-void mesh_accept_plinks_update(struct ieee80211_sub_if_data *sdata)
+u32 mesh_accept_plinks_update(struct ieee80211_sub_if_data *sdata)
 {
 	bool free_plinks;
+	u32 changed = 0;
 
 	/* In case mesh_plink_free_count > 0 and mesh_plinktbl_capacity == 0,
 	 * the mesh interface might be able to establish plinks with peers that
@@ -149,8 +152,12 @@ void mesh_accept_plinks_update(struct ieee80211_sub_if_data *sdata)
 	 */
 	free_plinks = mesh_plink_availables(sdata);
 
-	if (free_plinks != sdata->u.mesh.accepting_plinks)
-		ieee80211_mesh_housekeeping_timer((unsigned long) sdata);
+	if (free_plinks != sdata->u.mesh.accepting_plinks) {
+		sdata->u.mesh.accepting_plinks = free_plinks;
+		changed = BSS_CHANGED_BEACON;
+	}
+
+	return changed;
 }
 
 int mesh_rmc_init(struct ieee80211_sub_if_data *sdata)
@@ -262,7 +269,6 @@ mesh_add_meshconf_ie(struct sk_buff *skb, struct ieee80211_sub_if_data *sdata)
 	neighbors = (neighbors > 15) ? 15 : neighbors;
 	*pos++ = neighbors << 1;
 	/* Mesh capability */
-	ifmsh->accepting_plinks = mesh_plink_availables(sdata);
 	*pos = MESHCONF_CAPAB_FORWARDING;
 	*pos |= ifmsh->accepting_plinks ?
 	    MESHCONF_CAPAB_ACCEPT_PLINKS : 0x00;
@@ -521,14 +527,13 @@ int ieee80211_new_mesh_header(struct ieee80211s_hdr *meshhdr,
 static void ieee80211_mesh_housekeeping(struct ieee80211_sub_if_data *sdata,
 			   struct ieee80211_if_mesh *ifmsh)
 {
-	bool free_plinks;
+	u32 changed;
 
 	ieee80211_sta_expire(sdata, IEEE80211_MESH_PEER_INACTIVITY_LIMIT);
 	mesh_path_expire(sdata);
 
-	free_plinks = mesh_plink_availables(sdata);
-	if (free_plinks != sdata->u.mesh.accepting_plinks)
-		ieee80211_bss_info_change_notify(sdata, BSS_CHANGED_BEACON);
+	changed = mesh_accept_plinks_update(sdata);
+	ieee80211_bss_info_change_notify(sdata, changed);
 
 	mod_timer(&ifmsh->housekeeping_timer,
 		  round_jiffies(jiffies + IEEE80211_MESH_HOUSEKEEPING_INTERVAL));
@@ -622,6 +627,7 @@ void ieee80211_stop_mesh(struct ieee80211_sub_if_data *sdata)
 
 	del_timer_sync(&sdata->u.mesh.housekeeping_timer);
 	del_timer_sync(&sdata->u.mesh.mesh_path_root_timer);
+	del_timer_sync(&sdata->u.mesh.mesh_path_timer);
 	/*
 	 * If the timer fired while we waited for it, it will have
 	 * requeued the work. Now the work will be running again
@@ -634,6 +640,8 @@ void ieee80211_stop_mesh(struct ieee80211_sub_if_data *sdata)
 	local->fif_other_bss--;
 	atomic_dec(&local->iff_allmultis);
 	ieee80211_configure_filter(local);
+
+	sdata->u.mesh.timers_running = 0;
 }
 
 static void ieee80211_mesh_rx_bcn_presp(struct ieee80211_sub_if_data *sdata,
