@@ -365,17 +365,13 @@ static int ath6kl_nliftype_to_drv_iftype(enum nl80211_iftype type, u8 *nw_type)
 {
 	switch (type) {
 	case NL80211_IFTYPE_STATION:
+	case NL80211_IFTYPE_P2P_CLIENT:
 		*nw_type = INFRA_NETWORK;
 		break;
 	case NL80211_IFTYPE_ADHOC:
 		*nw_type = ADHOC_NETWORK;
 		break;
 	case NL80211_IFTYPE_AP:
-		*nw_type = AP_NETWORK;
-		break;
-	case NL80211_IFTYPE_P2P_CLIENT:
-		*nw_type = INFRA_NETWORK;
-		break;
 	case NL80211_IFTYPE_P2P_GO:
 		*nw_type = AP_NETWORK;
 		break;
@@ -1870,14 +1866,11 @@ static int ath6kl_wow_usr(struct ath6kl *ar, struct ath6kl_vif *vif,
 			  struct cfg80211_wowlan *wow, u32 *filter)
 {
 	int ret, pos;
-	u8 mask[WOW_MASK_SIZE];
+	u8 mask[WOW_PATTERN_SIZE];
 	u16 i;
 
 	/* Configure the patterns that we received from the user. */
 	for (i = 0; i < wow->n_patterns; i++) {
-
-		if (wow->patterns[i].pattern_len > WOW_MASK_SIZE)
-			return -EINVAL;
 
 		/*
 		 * Convert given nl80211 specific mask value to equivalent
