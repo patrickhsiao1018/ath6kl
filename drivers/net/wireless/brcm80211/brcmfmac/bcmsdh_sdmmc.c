@@ -42,6 +42,7 @@
 
 #define DMA_ALIGN_MASK	0x03
 
+#define SDIO_DEVICE_ID_BROADCOM_43241	0x4324
 #define SDIO_DEVICE_ID_BROADCOM_4329	0x4329
 #define SDIO_DEVICE_ID_BROADCOM_4330	0x4330
 #define SDIO_DEVICE_ID_BROADCOM_4334	0x4334
@@ -51,6 +52,7 @@
 
 /* devices we support, null terminated */
 static const struct sdio_device_id brcmf_sdmmc_ids[] = {
+	{SDIO_DEVICE(SDIO_VENDOR_ID_BROADCOM, SDIO_DEVICE_ID_BROADCOM_43241)},
 	{SDIO_DEVICE(SDIO_VENDOR_ID_BROADCOM, SDIO_DEVICE_ID_BROADCOM_4329)},
 	{SDIO_DEVICE(SDIO_VENDOR_ID_BROADCOM, SDIO_DEVICE_ID_BROADCOM_4330)},
 	{SDIO_DEVICE(SDIO_VENDOR_ID_BROADCOM, SDIO_DEVICE_ID_BROADCOM_4334)},
@@ -638,6 +640,8 @@ static int brcmf_sdio_pd_probe(struct platform_device *pdev)
 
 		oobirq_entry = kzalloc(sizeof(struct brcmf_sdio_oobirq),
 				       GFP_KERNEL);
+		if (!oobirq_entry)
+			return -ENOMEM;
 		oobirq_entry->irq = res->start;
 		oobirq_entry->flags = res->flags & IRQF_TRIGGER_MASK;
 		list_add_tail(&oobirq_entry->list, &oobirq_lh);
