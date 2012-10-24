@@ -26,6 +26,9 @@
 #include "11n.h"
 #include "cfg80211.h"
 
+static int disconnect_on_suspend = 1;
+module_param(disconnect_on_suspend, int, 0644);
+
 /*
  * Copies the multicast address list from device to driver.
  *
@@ -448,6 +451,16 @@ EXPORT_SYMBOL_GPL(mwifiex_cancel_hs);
 int mwifiex_enable_hs(struct mwifiex_adapter *adapter)
 {
 	struct mwifiex_ds_hs_cfg hscfg;
+	struct mwifiex_private *priv;
+	int i;
+
+	if (disconnect_on_suspend) {
+		for (i = 0; i < adapter->priv_num; i++) {
+			priv = adapter->priv[i];
+			if (priv)
+				mwifiex_deauthenticate(priv, NULL);
+		}
+	}
 
 	if (adapter->hs_activated) {
 		dev_dbg(adapter->dev, "cmd: HS Already actived\n");
@@ -700,7 +713,7 @@ static int mwifiex_set_wpa_ie_helper(struct mwifiex_private *priv,
 		dev_dbg(priv->adapter->dev, "cmd: Set Wpa_ie_len=%d IE=%#x\n",
 			priv->wpa_ie_len, priv->wpa_ie[0]);
 
-		if (priv->wpa_ie[0] == WLAN_EID_WPA) {
+		if (priv->wpa_ie[0] == WLAN_EID_VENDOR_SPECIFIC) {
 			priv->sec_info.wpa_enabled = true;
 		} else if (priv->wpa_ie[0] == WLAN_EID_RSN) {
 			priv->sec_info.wpa2_enabled = true;
@@ -1030,6 +1043,65 @@ mwifiex_get_ver_ext(struct mwifiex_private *priv)
 	return 0;
 }
 
+int
+mwifiex_remain_on_chan_cfg(struct mwifiex_private *priv, u16 action,
+			   struct ieee80211_channel *chan,
+			   enum nl80211_channel_type *ct,
+			   unsigned int duration)
+{
+	struct host_cmd_ds_remain_on_chan roc_cfg;
+	u8 sc;
+
+	memset(&roc_cfg, 0, sizeof(roc_cfg));
+	roc_cfg.action = cpu_to_le16(action);
+	if (action == HostCmd_ACT_GEN_SET) {
+		roc_cfg.band_cfg = chan->band;
+		sc = mwifiex_chan_type_to_sec_chan_offset(*ct);
+		roc_cfg.band_cfg |= (sc << 2);
+
+		roc_cfg.channel =
+			ieee80211_frequency_to_channel(chan->center_freq);
+		roc_cfg.duration = cpu_to_le32(duration);
+	}
+	if (mwifiex_send_cmd_sync(priv, HostCmd_CMD_REMAIN_ON_CHAN,
+				  action, 0, &roc_cfg)) {
+		dev_err(priv->adapter->dev, "failed to remain on channel\n");
+		return -1;
+	}
+
+	return roc_cfg.status;
+}
+
+int
+mwifiex_set_bss_role(struct mwifiex_private *priv, u8 bss_role)
+{
+	if (GET_BSS_ROLE(priv) == bss_role) {
+		dev_dbg(priv->adapter->dev,
+			"info: already in the desired role.\n");
+		return 0;
+	}
+
+	mwifiex_free_priv(priv);
+	mwifiex_init_priv(priv);
+
+	priv->bss_role = bss_role;
+	switch (bss_role) {
+	case MWIFIEX_BSS_ROLE_UAP:
+		priv->bss_mode = NL80211_IFTYPE_AP;
+		break;
+	case MWIFIEX_BSS_ROLE_STA:
+	case MWIFIEX_BSS_ROLE_ANY:
+	default:
+		priv->bss_mode = NL80211_IFTYPE_STATION;
+		break;
+	}
+
+	mwifiex_send_cmd_sync(priv, HostCmd_CMD_SET_BSS_MODE,
+			      HostCmd_ACT_GEN_SET, 0, NULL);
+
+	return mwifiex_sta_init_cmd(priv, false);
+}
+
 /*
  * Sends IOCTL request to get statistics information.
  *
@@ -1181,7 +1253,7 @@ mwifiex_set_gen_ie_helper(struct mwifiex_private *priv, u8 *ie_data_ptr,
 	}
 	pvendor_ie = (struct ieee_types_vendor_header *) ie_data_ptr;
 	/* Test to see if it is a WPA IE, if not, then it is a gen IE */
-	if (((pvendor_ie->element_id == WLAN_EID_WPA) &&
+	if (((pvendor_ie->element_id == WLAN_EID_VENDOR_SPECIFIC) &&
 	     (!memcmp(pvendor_ie->oui, wpa_oui, sizeof(wpa_oui)))) ||
 	    (pvendor_ie->element_id == WLAN_EID_RSN)) {
 

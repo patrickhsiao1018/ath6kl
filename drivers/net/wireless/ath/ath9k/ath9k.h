@@ -173,6 +173,8 @@ void ath_descdma_cleanup(struct ath_softc *sc, struct ath_descdma *dd,
 
 #define ATH_AN_2_TID(_an, _tidno)  (&(_an)->tid[(_tidno)])
 
+#define IS_CCK_RATE(rate) ((rate >= 0x18) && (rate <= 0x1e))
+
 #define ATH_TX_COMPLETE_POLL_INT	1000
 
 enum ATH_AGGR_STATUS {
@@ -435,6 +437,7 @@ void ath9k_set_beacon(struct ath_softc *sc);
 #define ATH_LONG_CALINTERVAL_INT  1000    /* 1000 ms */
 #define ATH_LONG_CALINTERVAL      30000   /* 30 seconds */
 #define ATH_RESTART_CALINTERVAL   1200000 /* 20 minutes */
+#define ATH_ANI_MAX_SKIP_COUNT  10
 
 #define ATH_PAPRD_TIMEOUT	100 /* msecs */
 #define ATH_PLL_WORK_INTERVAL   100
@@ -537,12 +540,16 @@ struct ath9k_wow_pattern {
 #ifdef CONFIG_MAC80211_LEDS
 void ath_init_leds(struct ath_softc *sc);
 void ath_deinit_leds(struct ath_softc *sc);
+void ath_fill_led_pin(struct ath_softc *sc);
 #else
 static inline void ath_init_leds(struct ath_softc *sc)
 {
 }
 
 static inline void ath_deinit_leds(struct ath_softc *sc)
+{
+}
+static inline void ath_fill_led_pin(struct ath_softc *sc)
 {
 }
 #endif
@@ -596,8 +603,6 @@ struct ath_ant_comb {
 	int main_conf;
 	enum ath9k_ant_div_comb_lna_conf first_quick_scan_conf;
 	enum ath9k_ant_div_comb_lna_conf second_quick_scan_conf;
-	int first_bias;
-	int second_bias;
 	bool first_ratio;
 	bool second_ratio;
 	unsigned long scan_start_time;
@@ -638,6 +643,7 @@ enum sc_op_flags {
 #define PS_WAIT_FOR_PSPOLL_DATA   BIT(2)
 #define PS_WAIT_FOR_TX_ACK        BIT(3)
 #define PS_BEACON_SYNC            BIT(4)
+#define PS_WAIT_FOR_ANI           BIT(5)
 
 struct ath_rate_table;
 

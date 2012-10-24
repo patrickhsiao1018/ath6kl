@@ -33,6 +33,8 @@
 #define HCI_LINK_KEY_SIZE	16
 #define HCI_AMP_LINK_KEY_SIZE	(2 * HCI_LINK_KEY_SIZE)
 
+#define HCI_MAX_AMP_ASSOC_SIZE	672
+
 /* HCI dev events */
 #define HCI_DEV_REG			1
 #define HCI_DEV_UNREG			2
@@ -196,6 +198,7 @@ enum {
 #define ACL_START_NO_FLUSH	0x00
 #define ACL_CONT		0x01
 #define ACL_START		0x02
+#define ACL_COMPLETE		0x03
 #define ACL_ACTIVE_BCAST	0x04
 #define ACL_PICO_BCAST		0x08
 
@@ -205,6 +208,7 @@ enum {
 #define ESCO_LINK	0x02
 /* Low Energy links do not have defined link type. Use invented one */
 #define LE_LINK		0x80
+#define AMP_LINK	0x81
 
 /* LMP features */
 #define LMP_3SLOT	0x01
@@ -302,8 +306,11 @@ enum {
 
 /* ---- HCI Error Codes ---- */
 #define HCI_ERROR_AUTH_FAILURE		0x05
+#define HCI_ERROR_CONNECTION_TIMEOUT	0x08
 #define HCI_ERROR_REJ_BAD_ADDR		0x0f
 #define HCI_ERROR_REMOTE_USER_TERM	0x13
+#define HCI_ERROR_REMOTE_LOW_RESOURCES	0x14
+#define HCI_ERROR_REMOTE_POWER_OFF	0x15
 #define HCI_ERROR_LOCAL_HOST_TERM	0x16
 #define HCI_ERROR_PAIRING_NOT_ALLOWED	0x18
 
@@ -553,10 +560,44 @@ struct hci_cp_accept_phy_link {
 	__u8     key[HCI_AMP_LINK_KEY_SIZE];
 } __packed;
 
-#define HCI_OP_DISCONN_PHY_LINK	0x0437
+#define HCI_OP_DISCONN_PHY_LINK		0x0437
 struct hci_cp_disconn_phy_link {
 	__u8     phy_handle;
 	__u8     reason;
+} __packed;
+
+struct ext_flow_spec {
+	__u8       id;
+	__u8       stype;
+	__le16     msdu;
+	__le32     sdu_itime;
+	__le32     acc_lat;
+	__le32     flush_to;
+} __packed;
+
+#define HCI_OP_CREATE_LOGICAL_LINK	0x0438
+#define HCI_OP_ACCEPT_LOGICAL_LINK	0x0439
+struct hci_cp_create_accept_logical_link {
+	__u8                  phy_handle;
+	struct ext_flow_spec  tx_flow_spec;
+	struct ext_flow_spec  rx_flow_spec;
+} __packed;
+
+#define HCI_OP_DISCONN_LOGICAL_LINK	0x043a
+struct hci_cp_disconn_logical_link {
+	__le16   log_handle;
+} __packed;
+
+#define HCI_OP_LOGICAL_LINK_CANCEL	0x043b
+struct hci_cp_logical_link_cancel {
+	__u8     phy_handle;
+	__u8     flow_spec_id;
+} __packed;
+
+struct hci_rp_logical_link_cancel {
+	__u8     status;
+	__u8     phy_handle;
+	__u8     flow_spec_id;
 } __packed;
 
 #define HCI_OP_SNIFF_MODE		0x0803
@@ -1244,6 +1285,24 @@ struct hci_ev_remote_oob_data_request {
 struct hci_ev_simple_pair_complete {
 	__u8     status;
 	bdaddr_t bdaddr;
+} __packed;
+
+#define HCI_EV_USER_PASSKEY_NOTIFY	0x3b
+struct hci_ev_user_passkey_notify {
+	bdaddr_t	bdaddr;
+	__le32		passkey;
+} __packed;
+
+#define HCI_KEYPRESS_STARTED		0
+#define HCI_KEYPRESS_ENTERED		1
+#define HCI_KEYPRESS_ERASED		2
+#define HCI_KEYPRESS_CLEARED		3
+#define HCI_KEYPRESS_COMPLETED		4
+
+#define HCI_EV_KEYPRESS_NOTIFY		0x3c
+struct hci_ev_keypress_notify {
+	bdaddr_t	bdaddr;
+	__u8		type;
 } __packed;
 
 #define HCI_EV_REMOTE_HOST_FEATURES	0x3d

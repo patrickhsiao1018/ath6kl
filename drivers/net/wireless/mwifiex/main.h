@@ -91,10 +91,14 @@ enum {
 #define MWIFIEX_MAX_EMPTY_TX_Q_CNT			10
 #define MWIFIEX_SCAN_DELAY_MSEC				20
 
+#define MWIFIEX_MIN_TX_PENDING_TO_CANCEL_SCAN		2
+
 #define RSN_GTK_OUI_OFFSET				2
 
 #define MWIFIEX_OUI_NOT_PRESENT			0
 #define MWIFIEX_OUI_PRESENT				1
+
+#define PKT_TYPE_MGMT	0xE5
 
 /*
  * Do not check for data_received for USB, as data_received
@@ -110,8 +114,6 @@ enum {
 #define MWIFIEX_TYPE_CMD				1
 #define MWIFIEX_TYPE_DATA				0
 #define MWIFIEX_TYPE_EVENT				3
-
-#define DBG_CMD_NUM						5
 
 #define MAX_BITMAP_RATES_SIZE			10
 
@@ -366,6 +368,12 @@ struct wps {
 	u8 session_enable;
 };
 
+struct mwifiex_roc_cfg {
+	u64 cookie;
+	struct ieee80211_channel chan;
+	enum nl80211_channel_type chan_type;
+};
+
 struct mwifiex_adapter;
 struct mwifiex_private;
 
@@ -492,6 +500,8 @@ struct mwifiex_private {
 	u16 rsn_idx;
 	struct timer_list scan_delay_timer;
 	u8 ap_11n_enabled;
+	u32 mgmt_frame_mask;
+	struct mwifiex_roc_cfg roc_cfg;
 };
 
 enum mwifiex_ba_status {
@@ -523,6 +533,7 @@ struct mwifiex_rx_reorder_tbl {
 	int win_size;
 	void **rx_reorder_ptr;
 	struct reorder_tmr_cnxt timer_context;
+	u8 flags;
 };
 
 struct mwifiex_bss_prio_node {
@@ -724,6 +735,9 @@ void mwifiex_stop_net_dev_queue(struct net_device *netdev,
 void mwifiex_wake_up_net_dev_queue(struct net_device *netdev,
 		struct mwifiex_adapter *adapter);
 
+int mwifiex_init_priv(struct mwifiex_private *priv);
+void mwifiex_free_priv(struct mwifiex_private *priv);
+
 int mwifiex_init_fw(struct mwifiex_adapter *adapter);
 
 int mwifiex_init_fw_complete(struct mwifiex_adapter *adapter);
@@ -735,6 +749,9 @@ int mwifiex_shutdown_fw_complete(struct mwifiex_adapter *adapter);
 int mwifiex_dnld_fw(struct mwifiex_adapter *, struct mwifiex_fw_image *);
 
 int mwifiex_recv_packet(struct mwifiex_adapter *, struct sk_buff *skb);
+
+int mwifiex_process_mgmt_packet(struct mwifiex_adapter *adapter,
+				struct sk_buff *skb);
 
 int mwifiex_process_event(struct mwifiex_adapter *adapter);
 
@@ -828,7 +845,7 @@ int mwifiex_cmd_802_11_associate(struct mwifiex_private *priv,
 				 struct mwifiex_bssdescriptor *bss_desc);
 int mwifiex_ret_802_11_associate(struct mwifiex_private *priv,
 				 struct host_cmd_ds_command *resp);
-void mwifiex_reset_connect_state(struct mwifiex_private *priv);
+void mwifiex_reset_connect_state(struct mwifiex_private *priv, u16 reason);
 u8 mwifiex_band_to_radio_type(u8 band);
 int mwifiex_deauthenticate(struct mwifiex_private *priv, u8 *mac);
 int mwifiex_adhoc_start(struct mwifiex_private *priv,
@@ -958,6 +975,14 @@ mwifiex_netdev_get_priv(struct net_device *dev)
 	return (struct mwifiex_private *) (*(unsigned long *) netdev_priv(dev));
 }
 
+/*
+ * This function checks if a skb holds a management frame.
+ */
+static inline bool mwifiex_is_skb_mgmt_frame(struct sk_buff *skb)
+{
+	return (*(u32 *)skb->data == PKT_TYPE_MGMT);
+}
+
 int mwifiex_init_shutdown_fw(struct mwifiex_private *priv,
 			     u32 func_init_shutdown);
 int mwifiex_add_card(void *, struct semaphore *, struct mwifiex_if_ops *, u8);
@@ -990,6 +1015,13 @@ int mwifiex_set_gen_ie(struct mwifiex_private *priv, u8 *ie, int ie_len);
 
 int mwifiex_get_ver_ext(struct mwifiex_private *priv);
 
+int mwifiex_remain_on_chan_cfg(struct mwifiex_private *priv, u16 action,
+			       struct ieee80211_channel *chan,
+			       enum nl80211_channel_type *channel_type,
+			       unsigned int duration);
+
+int mwifiex_set_bss_role(struct mwifiex_private *priv, u8 bss_role);
+
 int mwifiex_get_stats_info(struct mwifiex_private *priv,
 			   struct mwifiex_ds_get_stats *log);
 
@@ -1020,6 +1052,8 @@ int mwifiex_set_tx_power(struct mwifiex_private *priv,
 
 int mwifiex_main_process(struct mwifiex_adapter *);
 
+int mwifiex_queue_tx_pkt(struct mwifiex_private *priv, struct sk_buff *skb);
+
 int mwifiex_get_bss_info(struct mwifiex_private *,
 			 struct mwifiex_bss_info *);
 int mwifiex_fill_new_bss_desc(struct mwifiex_private *priv,
@@ -1030,8 +1064,10 @@ int mwifiex_update_bss_desc_with_ie(struct mwifiex_adapter *adapter,
 int mwifiex_check_network_compatibility(struct mwifiex_private *priv,
 					struct mwifiex_bssdescriptor *bss_desc);
 
+u8 mwifiex_chan_type_to_sec_chan_offset(enum nl80211_channel_type chan_type);
+
 struct wireless_dev *mwifiex_add_virtual_intf(struct wiphy *wiphy,
-					      char *name,
+					      const char *name,
 					      enum nl80211_iftype type,
 					      u32 *flags,
 					      struct vif_params *params);

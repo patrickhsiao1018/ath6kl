@@ -686,7 +686,7 @@ struct ath_hw_ops {
 			struct ath_hw_antcomb_conf *antconf);
 	void (*antdiv_comb_conf_set)(struct ath_hw *ah,
 			struct ath_hw_antcomb_conf *antconf);
-
+	void (*antctrl_shared_chain_lnadiv)(struct ath_hw *hw, bool enable);
 };
 
 struct ath_nf_limits {
@@ -730,6 +730,7 @@ struct ath_hw {
 	bool aspm_enabled;
 	bool is_monitoring;
 	bool need_an_top2_fixup;
+	bool shared_chain_lnadiv;
 	u16 tx_trig_level;
 
 	u32 nf_regs[6];
@@ -740,6 +741,7 @@ struct ath_hw {
 	u32 rfkill_polarity;
 	u32 ah_flags;
 
+	bool reset_power_on;
 	bool htc_reset_init;
 
 	enum nl80211_iftype opmode;
@@ -832,6 +834,7 @@ struct ath_hw {
 	int coarse_low[5];
 	int firpwr[5];
 	enum ath9k_ani_cmd ani_function;
+	u32 ani_skip_count;
 
 #ifdef CONFIG_ATH9K_BTCOEX_SUPPORT
 	struct ath_btcoex_hw btcoex_hw;

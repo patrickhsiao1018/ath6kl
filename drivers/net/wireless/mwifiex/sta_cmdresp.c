@@ -545,7 +545,7 @@ static int mwifiex_ret_802_11_deauthenticate(struct mwifiex_private *priv,
 	if (!memcmp(resp->params.deauth.mac_addr,
 		    &priv->curr_bss_params.bss_descriptor.mac_address,
 		    sizeof(resp->params.deauth.mac_addr)))
-		mwifiex_reset_connect_state(priv);
+		mwifiex_reset_connect_state(priv, WLAN_REASON_DEAUTH_LEAVING);
 
 	return 0;
 }
@@ -558,7 +558,7 @@ static int mwifiex_ret_802_11_deauthenticate(struct mwifiex_private *priv,
 static int mwifiex_ret_802_11_ad_hoc_stop(struct mwifiex_private *priv,
 					  struct host_cmd_ds_command *resp)
 {
-	mwifiex_reset_connect_state(priv);
+	mwifiex_reset_connect_state(priv, WLAN_REASON_DEAUTH_LEAVING);
 	return 0;
 }
 
@@ -650,6 +650,38 @@ static int mwifiex_ret_ver_ext(struct mwifiex_private *priv,
 		       sizeof(char) * 128);
 		memcpy(priv->version_str, ver_ext->version_str, 128);
 	}
+	return 0;
+}
+
+/*
+ * This function handles the command response of remain on channel.
+ */
+static int
+mwifiex_ret_remain_on_chan(struct mwifiex_private *priv,
+			   struct host_cmd_ds_command *resp,
+			   struct host_cmd_ds_remain_on_chan *roc_cfg)
+{
+	struct host_cmd_ds_remain_on_chan *resp_cfg = &resp->params.roc_cfg;
+
+	if (roc_cfg)
+		memcpy(roc_cfg, resp_cfg, sizeof(*roc_cfg));
+
+	return 0;
+}
+
+/*
+ * This function handles the command response of P2P mode cfg.
+ */
+static int
+mwifiex_ret_p2p_mode_cfg(struct mwifiex_private *priv,
+			 struct host_cmd_ds_command *resp,
+			 void *data_buf)
+{
+	struct host_cmd_ds_p2p_mode_cfg *mode_cfg = &resp->params.mode_cfg;
+
+	if (data_buf)
+		*((u16 *)data_buf) = le16_to_cpu(mode_cfg->mode);
+
 	return 0;
 }
 
@@ -875,6 +907,13 @@ int mwifiex_process_sta_cmdresp(struct mwifiex_private *priv, u16 cmdresp_no,
 	case HostCmd_CMD_VERSION_EXT:
 		ret = mwifiex_ret_ver_ext(priv, resp, data_buf);
 		break;
+	case HostCmd_CMD_REMAIN_ON_CHAN:
+		ret = mwifiex_ret_remain_on_chan(priv, resp, data_buf);
+		break;
+	case HostCmd_CMD_P2P_MODE_CFG:
+		ret = mwifiex_ret_p2p_mode_cfg(priv, resp, data_buf);
+		break;
+	case HostCmd_CMD_MGMT_FRAME_REG:
 	case HostCmd_CMD_FUNC_INIT:
 	case HostCmd_CMD_FUNC_SHUTDOWN:
 		break;

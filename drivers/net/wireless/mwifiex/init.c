@@ -118,6 +118,7 @@ static void scan_delay_timer_fn(unsigned long data)
 
 			mwifiex_insert_cmd_to_pending_q(adapter, cmd_node,
 							true);
+			queue_work(adapter->workqueue, &adapter->main_work);
 			goto done;
 		}
 	} else {
@@ -143,7 +144,7 @@ done:
  * Additionally, it also initializes all the locks and sets up all the
  * lists.
  */
-static int mwifiex_init_priv(struct mwifiex_private *priv)
+int mwifiex_init_priv(struct mwifiex_private *priv)
 {
 	u32 i;
 
@@ -213,6 +214,7 @@ static int mwifiex_init_priv(struct mwifiex_private *priv)
 	priv->wps_ie = NULL;
 	priv->wps_ie_len = 0;
 	priv->ap_11n_enabled = 0;
+	memset(&priv->roc_cfg, 0, sizeof(priv->roc_cfg));
 
 	priv->scan_block = false;
 
@@ -644,6 +646,17 @@ static void mwifiex_delete_bss_prio_tbl(struct mwifiex_private *priv)
 			*cur = (struct mwifiex_bss_prio_node *)head;
 		}
 	}
+}
+
+/*
+ * This function frees the private structure, including cleans
+ * up the TX and RX queues and frees the BSS priority tables.
+ */
+void mwifiex_free_priv(struct mwifiex_private *priv)
+{
+	mwifiex_clean_txrx(priv);
+	mwifiex_delete_bss_prio_tbl(priv);
+	mwifiex_free_curr_bcn(priv);
 }
 
 /*

@@ -76,7 +76,10 @@ static void bcma_pmu_resources_init(struct bcma_drv_cc *cc)
 	if (max_msk)
 		bcma_cc_write32(cc, BCMA_CC_PMU_MAXRES_MSK, max_msk);
 
-	/* Add some delay; allow resources to come up and settle. */
+	/*
+	 * Add some delay; allow resources to come up and settle.
+	 * Delay is required for SoC (early init).
+	 */
 	mdelay(2);
 }
 
@@ -141,7 +144,7 @@ static void bcma_pmu_workarounds(struct bcma_drv_cc *cc)
 	}
 }
 
-void bcma_pmu_init(struct bcma_drv_cc *cc)
+void bcma_pmu_early_init(struct bcma_drv_cc *cc)
 {
 	u32 pmucap;
 
@@ -150,7 +153,10 @@ void bcma_pmu_init(struct bcma_drv_cc *cc)
 
 	bcma_debug(cc->core->bus, "Found rev %u PMU (capabilities 0x%08X)\n",
 		   cc->pmu.rev, pmucap);
+}
 
+void bcma_pmu_init(struct bcma_drv_cc *cc)
+{
 	if (cc->pmu.rev == 1)
 		bcma_cc_mask32(cc, BCMA_CC_PMU_CTL,
 			      ~BCMA_CC_PMU_CTL_NOILPONW);

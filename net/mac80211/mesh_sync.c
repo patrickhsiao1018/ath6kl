@@ -56,7 +56,6 @@ void mesh_sync_adjust_tbtt(struct ieee80211_sub_if_data *sdata)
 	u64 tsfdelta;
 
 	spin_lock_bh(&ifmsh->sync_offset_lock);
-
 	if (ifmsh->sync_offset_clockdrift_max < beacon_int_fraction) {
 		msync_dbg(sdata, "TBTT : max clockdrift=%lld; adjusting\n",
 			  (long long) ifmsh->sync_offset_clockdrift_max);
@@ -69,11 +68,11 @@ void mesh_sync_adjust_tbtt(struct ieee80211_sub_if_data *sdata)
 		tsfdelta = -beacon_int_fraction;
 		ifmsh->sync_offset_clockdrift_max -= beacon_int_fraction;
 	}
+	spin_unlock_bh(&ifmsh->sync_offset_lock);
 
 	tsf = drv_get_tsf(local, sdata);
 	if (tsf != -1ULL)
 		drv_set_tsf(local, sdata, tsf + tsfdelta);
-	spin_unlock_bh(&ifmsh->sync_offset_lock);
 }
 
 static void mesh_sync_offset_rx_bcn_presp(struct ieee80211_sub_if_data *sdata,
@@ -235,49 +234,7 @@ static void mesh_sync_offset_adjust_tbtt(struct ieee80211_sub_if_data *sdata)
 	spin_unlock_bh(&ifmsh->sync_offset_lock);
 }
 
-static const u8 *mesh_get_vendor_oui(struct ieee80211_sub_if_data *sdata)
-{
-	struct ieee80211_if_mesh *ifmsh = &sdata->u.mesh;
-	u8 offset;
-
-	if (!ifmsh->ie || !ifmsh->ie_len)
-		return NULL;
-
-	offset = ieee80211_ie_split_vendor(ifmsh->ie,
-					ifmsh->ie_len, 0);
-
-	if (!offset)
-		return NULL;
-
-	return ifmsh->ie + offset + 2;
-}
-
-static void mesh_sync_vendor_rx_bcn_presp(struct ieee80211_sub_if_data *sdata,
-				   u16 stype,
-				   struct ieee80211_mgmt *mgmt,
-				   struct ieee802_11_elems *elems,
-				   struct ieee80211_rx_status *rx_status)
-{
-	const u8 *oui;
-
-	WARN_ON(sdata->u.mesh.mesh_sp_id != IEEE80211_SYNC_METHOD_VENDOR);
-	msync_dbg(sdata, "called mesh_sync_vendor_rx_bcn_presp\n");
-	oui = mesh_get_vendor_oui(sdata);
-	/*  here you would implement the vendor offset tracking for this oui */
-}
-
-static void mesh_sync_vendor_adjust_tbtt(struct ieee80211_sub_if_data *sdata)
-{
-	const u8 *oui;
-
-	WARN_ON(sdata->u.mesh.mesh_sp_id != IEEE80211_SYNC_METHOD_VENDOR);
-	msync_dbg(sdata, "called mesh_sync_vendor_adjust_tbtt\n");
-	oui = mesh_get_vendor_oui(sdata);
-	/*  here you would implement the vendor tsf adjustment for this oui */
-}
-
-/* global variable */
-static struct sync_method sync_methods[] = {
+static const struct sync_method sync_methods[] = {
 	{
 		.method = IEEE80211_SYNC_METHOD_NEIGHBOR_OFFSET,
 		.ops = {
@@ -285,18 +242,11 @@ static struct sync_method sync_methods[] = {
 			.adjust_tbtt = &mesh_sync_offset_adjust_tbtt,
 		}
 	},
-	{
-		.method = IEEE80211_SYNC_METHOD_VENDOR,
-		.ops = {
-			.rx_bcn_presp = &mesh_sync_vendor_rx_bcn_presp,
-			.adjust_tbtt = &mesh_sync_vendor_adjust_tbtt,
-		}
-	},
 };
 
-struct ieee80211_mesh_sync_ops *ieee80211_mesh_sync_ops_get(u8 method)
+const struct ieee80211_mesh_sync_ops *ieee80211_mesh_sync_ops_get(u8 method)
 {
-	struct ieee80211_mesh_sync_ops *ops = NULL;
+	const struct ieee80211_mesh_sync_ops *ops = NULL;
 	u8 i;
 
 	for (i = 0 ; i < ARRAY_SIZE(sync_methods); ++i) {

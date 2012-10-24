@@ -272,30 +272,6 @@ static void brcmf_netdev_set_multicast_list(struct net_device *ndev)
 	schedule_work(&drvr->multicast_work);
 }
 
-int brcmf_sendpkt(struct brcmf_pub *drvr, int ifidx, struct sk_buff *pktbuf)
-{
-	/* Reject if down */
-	if (!drvr->bus_if->drvr_up || (drvr->bus_if->state == BRCMF_BUS_DOWN))
-		return -ENODEV;
-
-	/* Update multicast statistic */
-	if (pktbuf->len >= ETH_ALEN) {
-		u8 *pktdata = (u8 *) (pktbuf->data);
-		struct ethhdr *eh = (struct ethhdr *)pktdata;
-
-		if (is_multicast_ether_addr(eh->h_dest))
-			drvr->tx_multicast++;
-		if (ntohs(eh->h_proto) == ETH_P_PAE)
-			atomic_inc(&drvr->pend_8021x_cnt);
-	}
-
-	/* If the protocol uses a data header, apply it */
-	brcmf_proto_hdrpush(drvr, ifidx, pktbuf);
-
-	/* Use bus module to send data frame */
-	return drvr->bus_if->brcmf_bus_txdata(drvr->dev, pktbuf);
-}
-
 static int brcmf_netdev_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 {
 	int ret;
@@ -338,7 +314,22 @@ static int brcmf_netdev_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 		}
 	}
 
-	ret = brcmf_sendpkt(drvr, ifp->idx, skb);
+	/* Update multicast statistic */
+	if (skb->len >= ETH_ALEN) {
+		u8 *pktdata = (u8 *)(skb->data);
+		struct ethhdr *eh = (struct ethhdr *)pktdata;
+
+		if (is_multicast_ether_addr(eh->h_dest))
+			drvr->tx_multicast++;
+		if (ntohs(eh->h_proto) == ETH_P_PAE)
+			atomic_inc(&drvr->pend_8021x_cnt);
+	}
+
+	/* If the protocol uses a data header, apply it */
+	brcmf_proto_hdrpush(drvr, ifp->idx, skb);
+
+	/* Use bus module to send data frame */
+	ret =  drvr->bus_if->brcmf_bus_txdata(drvr->dev, skb);
 
 done:
 	if (ret)
@@ -1171,42 +1162,6 @@ int brcmf_netdev_wait_pend8021x(struct net_device *ndev)
 	}
 	return pend;
 }
-
-#ifdef DEBUG
-int brcmf_write_to_file(struct brcmf_pub *drvr, const u8 *buf, int size)
-{
-	int ret = 0;
-	struct file *fp;
-	mm_segment_t old_fs;
-	loff_t pos = 0;
-
-	/* change to KERNEL_DS address limit */
-	old_fs = get_fs();
-	set_fs(KERNEL_DS);
-
-	/* open file to write */
-	fp = filp_open("/tmp/mem_dump", O_WRONLY | O_CREAT, 0640);
-	if (!fp) {
-		brcmf_dbg(ERROR, "open file error\n");
-		ret = -1;
-		goto exit;
-	}
-
-	/* Write buf to file */
-	fp->f_op->write(fp, (char __user *)buf, size, &pos);
-
-exit:
-	/* free buf before return */
-	kfree(buf);
-	/* close file before return */
-	if (fp)
-		filp_close(fp, NULL);
-	/* restore previous address limit */
-	set_fs(old_fs);
-
-	return ret;
-}
-#endif				/* DEBUG */
 
 static void brcmf_driver_init(struct work_struct *work)
 {

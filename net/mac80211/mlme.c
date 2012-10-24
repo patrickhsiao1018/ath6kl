@@ -88,8 +88,6 @@ MODULE_PARM_DESC(probe_wait_ms,
 #define TMR_RUNNING_TIMER	0
 #define TMR_RUNNING_CHANSW	1
 
-#define DEAUTH_DISASSOC_LEN	(24 /* hdr */ + 2 /* reason */)
-
 /*
  * All cfg80211 functions have to be called outside a locked
  * section so that they can acquire a lock themselves... This
@@ -180,20 +178,30 @@ static u32 ieee80211_config_ht_tx(struct ieee80211_sub_if_data *sdata,
 {
 	struct ieee80211_local *local = sdata->local;
 	struct ieee80211_supported_band *sband;
+	struct ieee80211_chanctx_conf *chanctx_conf;
+	struct ieee80211_channel *chan;
 	struct sta_info *sta;
 	u32 changed = 0;
 	u16 ht_opmode;
 	bool disable_40 = false;
 
-	sband = local->hw.wiphy->bands[local->oper_channel->band];
+	rcu_read_lock();
+	chanctx_conf = rcu_dereference(sdata->vif.chanctx_conf);
+	if (WARN_ON(!chanctx_conf)) {
+		rcu_read_unlock();
+		return 0;
+	}
+	chan = chanctx_conf->channel;
+	rcu_read_unlock();
+	sband = local->hw.wiphy->bands[chan->band];
 
 	switch (sdata->vif.bss_conf.channel_type) {
 	case NL80211_CHAN_HT40PLUS:
-		if (local->oper_channel->flags & IEEE80211_CHAN_NO_HT40PLUS)
+		if (chan->flags & IEEE80211_CHAN_NO_HT40PLUS)
 			disable_40 = true;
 		break;
 	case NL80211_CHAN_HT40MINUS:
-		if (local->oper_channel->flags & IEEE80211_CHAN_NO_HT40MINUS)
+		if (chan->flags & IEEE80211_CHAN_NO_HT40MINUS)
 			disable_40 = true;
 		break;
 	default:
@@ -345,7 +353,7 @@ static void ieee80211_add_vht_ie(struct ieee80211_sub_if_data *sdata,
 	cap = vht_cap.cap;
 
 	/* reserve and fill IE */
-	pos = skb_put(skb, sizeof(struct ieee80211_vht_capabilities) + 2);
+	pos = skb_put(skb, sizeof(struct ieee80211_vht_cap) + 2);
 	ieee80211_ie_build_vht_cap(pos, &vht_cap, cap);
 }
 
@@ -361,11 +369,21 @@ static void ieee80211_send_assoc(struct ieee80211_sub_if_data *sdata)
 	int i, count, rates_len, supp_rates_len;
 	u16 capab;
 	struct ieee80211_supported_band *sband;
+	struct ieee80211_chanctx_conf *chanctx_conf;
+	struct ieee80211_channel *chan;
 	u32 rates = 0;
 
 	lockdep_assert_held(&ifmgd->mtx);
 
-	sband = local->hw.wiphy->bands[local->oper_channel->band];
+	rcu_read_lock();
+	chanctx_conf = rcu_dereference(sdata->vif.chanctx_conf);
+	if (WARN_ON(!chanctx_conf)) {
+		rcu_read_unlock();
+		return;
+	}
+	chan = chanctx_conf->channel;
+	rcu_read_unlock();
+	sband = local->hw.wiphy->bands[chan->band];
 
 	if (assoc_data->supp_rates_len) {
 		/*
@@ -394,7 +412,7 @@ static void ieee80211_send_assoc(struct ieee80211_sub_if_data *sdata)
 			4 + /* power capability */
 			2 + 2 * sband->n_channels + /* supported channels */
 			2 + sizeof(struct ieee80211_ht_cap) + /* HT */
-			2 + sizeof(struct ieee80211_vht_capabilities) + /* VHT */
+			2 + sizeof(struct ieee80211_vht_cap) + /* VHT */
 			assoc_data->ie_len + /* extra IEs */
 			9, /* WMM */
 			GFP_KERNEL);
@@ -487,7 +505,7 @@ static void ieee80211_send_assoc(struct ieee80211_sub_if_data *sdata)
 		*pos++ = WLAN_EID_PWR_CAPABILITY;
 		*pos++ = 2;
 		*pos++ = 0; /* min tx power */
-		*pos++ = local->oper_channel->max_power; /* max tx power */
+		*pos++ = chan->max_power; /* max tx power */
 
 		/* 2. supported channels */
 		/* TODO: get this in reg domain format */
@@ -525,7 +543,7 @@ static void ieee80211_send_assoc(struct ieee80211_sub_if_data *sdata)
 
 	if (!(ifmgd->flags & IEEE80211_STA_DISABLE_11N))
 		ieee80211_add_ht_ie(sdata, skb, assoc_data->ap_ht_param,
-				    sband, local->oper_channel, ifmgd->ap_smps);
+				    sband, chan, sdata->smps_mode);
 
 	if (!(ifmgd->flags & IEEE80211_STA_DISABLE_VHT))
 		ieee80211_add_vht_ie(sdata, skb, sband);
@@ -572,46 +590,6 @@ static void ieee80211_send_assoc(struct ieee80211_sub_if_data *sdata)
 
 	IEEE80211_SKB_CB(skb)->flags |= IEEE80211_TX_INTFL_DONT_ENCRYPT;
 	ieee80211_tx_skb(sdata, skb);
-}
-
-static void ieee80211_send_deauth_disassoc(struct ieee80211_sub_if_data *sdata,
-					   const u8 *bssid, u16 stype,
-					   u16 reason, bool send_frame,
-					   u8 *frame_buf)
-{
-	struct ieee80211_local *local = sdata->local;
-	struct ieee80211_if_managed *ifmgd = &sdata->u.mgd;
-	struct sk_buff *skb;
-	struct ieee80211_mgmt *mgmt = (void *)frame_buf;
-
-	/* build frame */
-	mgmt->frame_control = cpu_to_le16(IEEE80211_FTYPE_MGMT | stype);
-	mgmt->duration = 0; /* initialize only */
-	mgmt->seq_ctrl = 0; /* initialize only */
-	memcpy(mgmt->da, bssid, ETH_ALEN);
-	memcpy(mgmt->sa, sdata->vif.addr, ETH_ALEN);
-	memcpy(mgmt->bssid, bssid, ETH_ALEN);
-	/* u.deauth.reason_code == u.disassoc.reason_code */
-	mgmt->u.deauth.reason_code = cpu_to_le16(reason);
-
-	if (send_frame) {
-		skb = dev_alloc_skb(local->hw.extra_tx_headroom +
-				    DEAUTH_DISASSOC_LEN);
-		if (!skb)
-			return;
-
-		skb_reserve(skb, local->hw.extra_tx_headroom);
-
-		/* copy in frame */
-		memcpy(skb_put(skb, DEAUTH_DISASSOC_LEN),
-		       mgmt, DEAUTH_DISASSOC_LEN);
-
-		if (!(ifmgd->flags & IEEE80211_STA_MFP_ENABLED))
-			IEEE80211_SKB_CB(skb)->flags |=
-				IEEE80211_TX_INTFL_DONT_ENCRYPT;
-
-		ieee80211_tx_skb(sdata, skb);
-	}
 }
 
 void ieee80211_send_pspoll(struct ieee80211_local *local,
@@ -699,18 +677,18 @@ static void ieee80211_chswitch_work(struct work_struct *work)
 	if (!ifmgd->associated)
 		goto out;
 
-	sdata->local->oper_channel = sdata->local->csa_channel;
+	sdata->local->_oper_channel = sdata->local->csa_channel;
 	if (!sdata->local->ops->channel_switch) {
 		/* call "hw_config" only if doing sw channel switch */
 		ieee80211_hw_config(sdata->local,
 			IEEE80211_CONF_CHANGE_CHANNEL);
 	} else {
 		/* update the device channel directly */
-		sdata->local->hw.conf.channel = sdata->local->oper_channel;
+		sdata->local->hw.conf.channel = sdata->local->_oper_channel;
 	}
 
 	/* XXX: shouldn't really modify cfg80211-owned data! */
-	ifmgd->associated->channel = sdata->local->oper_channel;
+	ifmgd->associated->channel = sdata->local->_oper_channel;
 
 	/* XXX: wait for a beacon first? */
 	ieee80211_wake_queues_by_reason(&sdata->local->hw,
@@ -722,24 +700,18 @@ static void ieee80211_chswitch_work(struct work_struct *work)
 
 void ieee80211_chswitch_done(struct ieee80211_vif *vif, bool success)
 {
-	struct ieee80211_sub_if_data *sdata;
-	struct ieee80211_if_managed *ifmgd;
-
-	sdata = vif_to_sdata(vif);
-	ifmgd = &sdata->u.mgd;
+	struct ieee80211_sub_if_data *sdata = vif_to_sdata(vif);
+	struct ieee80211_if_managed *ifmgd = &sdata->u.mgd;
 
 	trace_api_chswitch_done(sdata, success);
 	if (!success) {
-		/*
-		 * If the channel switch was not successful, stay
-		 * around on the old channel. We currently lack
-		 * good handling of this situation, possibly we
-		 * should just drop the association.
-		 */
-		sdata->local->csa_channel = sdata->local->oper_channel;
+		sdata_info(sdata,
+			   "driver channel switch failed, disconnecting\n");
+		ieee80211_queue_work(&sdata->local->hw,
+				     &ifmgd->csa_connection_drop_work);
+	} else {
+		ieee80211_queue_work(&sdata->local->hw, &ifmgd->chswitch_work);
 	}
-
-	ieee80211_queue_work(&sdata->local->hw, &ifmgd->chswitch_work);
 }
 EXPORT_SYMBOL(ieee80211_chswitch_done);
 
@@ -768,6 +740,7 @@ void ieee80211_sta_process_chanswitch(struct ieee80211_sub_if_data *sdata,
 	struct ieee80211_if_managed *ifmgd = &sdata->u.mgd;
 	int new_freq = ieee80211_channel_to_frequency(sw_elem->new_ch_num,
 						      cbss->channel->band);
+	struct ieee80211_chanctx *chanctx;
 
 	ASSERT_MGD_MTX(ifmgd);
 
@@ -784,12 +757,42 @@ void ieee80211_sta_process_chanswitch(struct ieee80211_sub_if_data *sdata,
 		return;
 
 	new_ch = ieee80211_get_channel(sdata->local->hw.wiphy, new_freq);
-	if (!new_ch || new_ch->flags & IEEE80211_CHAN_DISABLED)
+	if (!new_ch || new_ch->flags & IEEE80211_CHAN_DISABLED) {
+		sdata_info(sdata,
+			   "AP %pM switches to unsupported channel (%d MHz), disconnecting\n",
+			   ifmgd->associated->bssid, new_freq);
+		ieee80211_queue_work(&sdata->local->hw,
+				     &ifmgd->csa_connection_drop_work);
 		return;
-
-	sdata->local->csa_channel = new_ch;
+	}
 
 	ifmgd->flags |= IEEE80211_STA_CSA_RECEIVED;
+
+	if (sdata->local->use_chanctx) {
+		sdata_info(sdata,
+			   "not handling channel switch with channel contexts\n");
+		ieee80211_queue_work(&sdata->local->hw,
+				     &ifmgd->csa_connection_drop_work);
+	}
+
+	mutex_lock(&sdata->local->chanctx_mtx);
+	if (WARN_ON(!rcu_access_pointer(sdata->vif.chanctx_conf))) {
+		mutex_unlock(&sdata->local->chanctx_mtx);
+		return;
+	}
+	chanctx = container_of(rcu_access_pointer(sdata->vif.chanctx_conf),
+			       struct ieee80211_chanctx, conf);
+	if (chanctx->refcount > 1) {
+		sdata_info(sdata,
+			   "channel switch with multiple interfaces on the same channel, disconnecting\n");
+		ieee80211_queue_work(&sdata->local->hw,
+				     &ifmgd->csa_connection_drop_work);
+		mutex_unlock(&sdata->local->chanctx_mtx);
+		return;
+	}
+	mutex_unlock(&sdata->local->chanctx_mtx);
+
+	sdata->local->csa_channel = new_ch;
 
 	if (sw_elem->mode)
 		ieee80211_stop_queues_by_reason(&sdata->local->hw,
@@ -818,23 +821,71 @@ void ieee80211_sta_process_chanswitch(struct ieee80211_sub_if_data *sdata,
 }
 
 static void ieee80211_handle_pwr_constr(struct ieee80211_sub_if_data *sdata,
-					u16 capab_info, u8 *pwr_constr_elem,
-					u8 pwr_constr_elem_len)
+					struct ieee80211_channel *channel,
+					const u8 *country_ie, u8 country_ie_len,
+					const u8 *pwr_constr_elem)
 {
-	struct ieee80211_conf *conf = &sdata->local->hw.conf;
+	struct ieee80211_country_ie_triplet *triplet;
+	int chan = ieee80211_frequency_to_channel(channel->center_freq);
+	int i, chan_pwr, chan_increment, new_ap_level;
+	bool have_chan_pwr = false;
 
-	if (!(capab_info & WLAN_CAPABILITY_SPECTRUM_MGMT))
+	/* Invalid IE */
+	if (country_ie_len % 2 || country_ie_len < IEEE80211_COUNTRY_IE_MIN_LEN)
 		return;
 
-	/* Power constraint IE length should be 1 octet */
-	if (pwr_constr_elem_len != 1)
-		return;
+	triplet = (void *)(country_ie + 3);
+	country_ie_len -= 3;
 
-	if ((*pwr_constr_elem <= conf->channel->max_reg_power) &&
-	    (*pwr_constr_elem != sdata->local->power_constr_level)) {
-		sdata->local->power_constr_level = *pwr_constr_elem;
-		ieee80211_hw_config(sdata->local, 0);
+	switch (channel->band) {
+	default:
+		WARN_ON_ONCE(1);
+		/* fall through */
+	case IEEE80211_BAND_2GHZ:
+	case IEEE80211_BAND_60GHZ:
+		chan_increment = 1;
+		break;
+	case IEEE80211_BAND_5GHZ:
+		chan_increment = 4;
+		break;
 	}
+
+	/* find channel */
+	while (country_ie_len >= 3) {
+		u8 first_channel = triplet->chans.first_channel;
+
+		if (first_channel >= IEEE80211_COUNTRY_EXTENSION_ID)
+			goto next;
+
+		for (i = 0; i < triplet->chans.num_channels; i++) {
+			if (first_channel + i * chan_increment == chan) {
+				have_chan_pwr = true;
+				chan_pwr = triplet->chans.max_power;
+				break;
+			}
+		}
+		if (have_chan_pwr)
+			break;
+
+ next:
+		triplet++;
+		country_ie_len -= 3;
+	}
+
+	if (!have_chan_pwr)
+		return;
+
+	new_ap_level = max_t(int, 0, chan_pwr - *pwr_constr_elem);
+
+	if (sdata->local->ap_power_level == new_ap_level)
+		return;
+
+	sdata_info(sdata,
+		   "Limiting TX power to %d (%d - %d) dBm as advertised by %pM\n",
+		   new_ap_level, chan_pwr, *pwr_constr_elem,
+		   sdata->u.mgd.bssid);
+	sdata->local->ap_power_level = new_ap_level;
+	ieee80211_hw_config(sdata->local, 0);
 }
 
 void ieee80211_enable_dyn_ps(struct ieee80211_vif *vif)
@@ -1271,7 +1322,7 @@ static u32 ieee80211_handle_bss_capability(struct ieee80211_sub_if_data *sdata,
 	}
 
 	use_short_slot = !!(capab & WLAN_CAPABILITY_SHORT_SLOT_TIME);
-	if (sdata->local->oper_channel->band == IEEE80211_BAND_5GHZ)
+	if (ieee80211_get_sdata_band(sdata) == IEEE80211_BAND_5GHZ)
 		use_short_slot = true;
 
 	if (use_protection != bss_conf->use_cts_prot) {
@@ -1339,9 +1390,9 @@ static void ieee80211_set_associated(struct ieee80211_sub_if_data *sdata,
 
 	mutex_lock(&local->iflist_mtx);
 	ieee80211_recalc_ps(local, -1);
-	ieee80211_recalc_smps(local);
 	mutex_unlock(&local->iflist_mtx);
 
+	ieee80211_recalc_smps(sdata);
 	ieee80211_recalc_ps_vif(sdata);
 
 	netif_tx_start_all_queues(sdata->dev);
@@ -1390,7 +1441,7 @@ static void ieee80211_set_disassoc(struct ieee80211_sub_if_data *sdata,
 	sta = sta_info_get(sdata, ifmgd->bssid);
 	if (sta) {
 		set_sta_flag(sta, WLAN_STA_BLOCK_BA);
-		ieee80211_sta_tear_down_BA_sessions(sta, tx);
+		ieee80211_sta_tear_down_BA_sessions(sta, false);
 	}
 	mutex_unlock(&local->sta_mtx);
 
@@ -1438,7 +1489,7 @@ static void ieee80211_set_disassoc(struct ieee80211_sub_if_data *sdata,
 	memset(&ifmgd->ht_capa, 0, sizeof(ifmgd->ht_capa));
 	memset(&ifmgd->ht_capa_mask, 0, sizeof(ifmgd->ht_capa_mask));
 
-	local->power_constr_level = 0;
+	local->ap_power_level = 0;
 
 	del_timer_sync(&local->dynamic_ps_timer);
 	cancel_work_sync(&local->dynamic_ps_enable_work);
@@ -1456,9 +1507,7 @@ static void ieee80211_set_disassoc(struct ieee80211_sub_if_data *sdata,
 	changed |= BSS_CHANGED_BSSID | BSS_CHANGED_HT;
 	ieee80211_bss_info_change_notify(sdata, changed);
 
-	/* channel(_type) changes are handled by ieee80211_hw_config */
-	WARN_ON(!ieee80211_set_channel_type(local, sdata, NL80211_CHAN_NO_HT));
-	ieee80211_hw_config(local, 0);
+	ieee80211_vif_release_channel(sdata);
 
 	/* disassociated - set to defaults now */
 	ieee80211_set_wmm_default(sdata, false);
@@ -1580,7 +1629,7 @@ static void ieee80211_mgd_probe_ap_send(struct ieee80211_sub_if_data *sdata)
 
 		ieee80211_send_probe_req(sdata, dst, ssid + 2, ssid_len, NULL,
 					 0, (u32) -1, true, false,
-					 ifmgd->associated->channel);
+					 ifmgd->associated->channel, false);
 	}
 
 	ifmgd->probe_timeout = jiffies + msecs_to_jiffies(probe_wait_ms);
@@ -1683,8 +1732,7 @@ struct sk_buff *ieee80211_ap_probereq_get(struct ieee80211_hw *hw,
 		ssid_len = ssid[1];
 
 	skb = ieee80211_build_probe_req(sdata, cbss->bssid,
-					(u32) -1,
-					sdata->local->oper_channel,
+					(u32) -1, cbss->channel,
 					ssid + 2, ssid_len,
 					NULL, 0, true);
 
@@ -1692,11 +1740,12 @@ struct sk_buff *ieee80211_ap_probereq_get(struct ieee80211_hw *hw,
 }
 EXPORT_SYMBOL(ieee80211_ap_probereq_get);
 
-static void __ieee80211_connection_loss(struct ieee80211_sub_if_data *sdata)
+static void __ieee80211_disconnect(struct ieee80211_sub_if_data *sdata,
+				   bool transmit_frame)
 {
 	struct ieee80211_if_managed *ifmgd = &sdata->u.mgd;
 	struct ieee80211_local *local = sdata->local;
-	u8 frame_buf[DEAUTH_DISASSOC_LEN];
+	u8 frame_buf[IEEE80211_DEAUTH_FRAME_LEN];
 
 	mutex_lock(&ifmgd->mtx);
 	if (!ifmgd->associated) {
@@ -1704,19 +1753,17 @@ static void __ieee80211_connection_loss(struct ieee80211_sub_if_data *sdata)
 		return;
 	}
 
-	sdata_info(sdata, "Connection to AP %pM lost\n",
-		   ifmgd->associated->bssid);
-
 	ieee80211_set_disassoc(sdata, IEEE80211_STYPE_DEAUTH,
 			       WLAN_REASON_DISASSOC_DUE_TO_INACTIVITY,
-			       false, frame_buf);
+			       transmit_frame, frame_buf);
+	ifmgd->flags &= ~IEEE80211_STA_CSA_RECEIVED;
 	mutex_unlock(&ifmgd->mtx);
 
 	/*
 	 * must be outside lock due to cfg80211,
 	 * but that's not a problem.
 	 */
-	cfg80211_send_deauth(sdata->dev, frame_buf, DEAUTH_DISASSOC_LEN);
+	cfg80211_send_deauth(sdata->dev, frame_buf, IEEE80211_DEAUTH_FRAME_LEN);
 
 	mutex_lock(&local->mtx);
 	ieee80211_recalc_idle(local);
@@ -1739,10 +1786,24 @@ static void ieee80211_beacon_connection_loss_work(struct work_struct *work)
 		rcu_read_unlock();
 	}
 
-	if (sdata->local->hw.flags & IEEE80211_HW_CONNECTION_MONITOR)
-		__ieee80211_connection_loss(sdata);
-	else
+	if (sdata->local->hw.flags & IEEE80211_HW_CONNECTION_MONITOR) {
+		sdata_info(sdata, "Connection to AP %pM lost\n",
+			   ifmgd->bssid);
+		__ieee80211_disconnect(sdata, false);
+	} else {
 		ieee80211_mgd_probe_ap(sdata, true);
+	}
+}
+
+static void ieee80211_csa_connection_drop_work(struct work_struct *work)
+{
+	struct ieee80211_sub_if_data *sdata =
+		container_of(work, struct ieee80211_sub_if_data,
+			     u.mgd.csa_connection_drop_work);
+
+	ieee80211_wake_queues_by_reason(&sdata->local->hw,
+					IEEE80211_QUEUE_STOP_REASON_CSA);
+	__ieee80211_disconnect(sdata, true);
 }
 
 void ieee80211_beacon_loss(struct ieee80211_vif *vif)
@@ -1782,6 +1843,7 @@ static void ieee80211_destroy_auth_data(struct ieee80211_sub_if_data *sdata,
 
 		memset(sdata->u.mgd.bssid, 0, ETH_ALEN);
 		ieee80211_bss_info_change_notify(sdata, BSS_CHANGED_BSSID);
+		ieee80211_vif_release_channel(sdata);
 	}
 
 	cfg80211_put_bss(auth_data->bss);
@@ -1802,7 +1864,7 @@ static void ieee80211_auth_challenge(struct ieee80211_sub_if_data *sdata,
 		return;
 	auth_data->expected_transaction = 4;
 	drv_mgd_prepare_tx(sdata->local, sdata);
-	ieee80211_send_auth(sdata, 3, auth_data->algorithm,
+	ieee80211_send_auth(sdata, 3, auth_data->algorithm, 0,
 			    elems.challenge - 2, elems.challenge_len + 2,
 			    auth_data->bss->bssid, auth_data->bss->bssid,
 			    auth_data->key, auth_data->key_len,
@@ -1836,8 +1898,13 @@ ieee80211_rx_mgmt_auth(struct ieee80211_sub_if_data *sdata,
 	status_code = le16_to_cpu(mgmt->u.auth.status_code);
 
 	if (auth_alg != ifmgd->auth_data->algorithm ||
-	    auth_transaction != ifmgd->auth_data->expected_transaction)
+	    auth_transaction != ifmgd->auth_data->expected_transaction) {
+		sdata_info(sdata, "%pM unexpected authentication state: alg %d (expected %d) transact %d (expected %d)\n",
+			   mgmt->sa, auth_alg, ifmgd->auth_data->algorithm,
+			   auth_transaction,
+			   ifmgd->auth_data->expected_transaction);
 		return RX_MGMT_NONE;
+	}
 
 	if (status_code != WLAN_STATUS_SUCCESS) {
 		sdata_info(sdata, "%pM denied authentication (status %d)\n",
@@ -1850,6 +1917,7 @@ ieee80211_rx_mgmt_auth(struct ieee80211_sub_if_data *sdata,
 	case WLAN_AUTH_OPEN:
 	case WLAN_AUTH_LEAP:
 	case WLAN_AUTH_FT:
+	case WLAN_AUTH_SAE:
 		break;
 	case WLAN_AUTH_SHARED_KEY:
 		if (ifmgd->auth_data->expected_transaction != 4) {
@@ -1868,6 +1936,15 @@ ieee80211_rx_mgmt_auth(struct ieee80211_sub_if_data *sdata,
 	ifmgd->auth_data->done = true;
 	ifmgd->auth_data->timeout = jiffies + IEEE80211_AUTH_WAIT_ASSOC;
 	run_again(ifmgd, ifmgd->auth_data->timeout);
+
+	if (ifmgd->auth_data->algorithm == WLAN_AUTH_SAE &&
+	    ifmgd->auth_data->expected_transaction != 2) {
+		/*
+		 * Report auth frame to user space for processing since another
+		 * round of Authentication frames is still needed.
+		 */
+		return RX_MGMT_CFG80211_RX_AUTH;
+	}
 
 	/* move station state to auth */
 	mutex_lock(&sdata->local->sta_mtx);
@@ -2008,6 +2085,7 @@ static void ieee80211_destroy_assoc_data(struct ieee80211_sub_if_data *sdata,
 
 		memset(sdata->u.mgd.bssid, 0, ETH_ALEN);
 		ieee80211_bss_info_change_notify(sdata, BSS_CHANGED_BSSID);
+		ieee80211_vif_release_channel(sdata);
 	}
 
 	kfree(assoc_data);
@@ -2069,7 +2147,7 @@ static bool ieee80211_assoc_success(struct ieee80211_sub_if_data *sdata,
 		return false;
 	}
 
-	sband = local->hw.wiphy->bands[local->oper_channel->band];
+	sband = local->hw.wiphy->bands[ieee80211_get_sdata_band(sdata)];
 
 	if (elems.ht_cap_elem && !(ifmgd->flags & IEEE80211_STA_DISABLE_11N))
 		ieee80211_ht_cap_ie_to_sta_ht_cap(sdata, sband,
@@ -2077,6 +2155,11 @@ static bool ieee80211_assoc_success(struct ieee80211_sub_if_data *sdata,
 
 	sta->supports_40mhz =
 		sta->sta.ht_cap.cap & IEEE80211_HT_CAP_SUP_WIDTH_20_40;
+
+	if (elems.vht_cap_elem && !(ifmgd->flags & IEEE80211_STA_DISABLE_VHT))
+		ieee80211_vht_cap_ie_to_sta_vht_cap(sdata, sband,
+						    elems.vht_cap_elem,
+						    &sta->sta.vht_cap);
 
 	rate_control_rate_init(sta);
 
@@ -2347,6 +2430,8 @@ static void ieee80211_rx_mgmt_beacon(struct ieee80211_sub_if_data *sdata,
 	size_t baselen;
 	struct ieee802_11_elems elems;
 	struct ieee80211_local *local = sdata->local;
+	struct ieee80211_chanctx_conf *chanctx_conf;
+	struct ieee80211_channel *chan;
 	u32 changed = 0;
 	bool erp_valid, directed_tim = false;
 	u8 erp_value = 0;
@@ -2360,8 +2445,19 @@ static void ieee80211_rx_mgmt_beacon(struct ieee80211_sub_if_data *sdata,
 	if (baselen > len)
 		return;
 
-	if (rx_status->freq != local->oper_channel->center_freq)
+	rcu_read_lock();
+	chanctx_conf = rcu_dereference(sdata->vif.chanctx_conf);
+	if (!chanctx_conf) {
+		rcu_read_unlock();
 		return;
+	}
+
+	if (rx_status->freq != chanctx_conf->channel->center_freq) {
+		rcu_read_unlock();
+		return;
+	}
+	chan = chanctx_conf->channel;
+	rcu_read_unlock();
 
 	if (ifmgd->assoc_data && !ifmgd->assoc_data->have_beacon &&
 	    ether_addr_equal(mgmt->bssid, ifmgd->assoc_data->bss->bssid)) {
@@ -2521,24 +2617,17 @@ static void ieee80211_rx_mgmt_beacon(struct ieee80211_sub_if_data *sdata,
 
 
 	if (elems.ht_cap_elem && elems.ht_operation && elems.wmm_param &&
-	    !(ifmgd->flags & IEEE80211_STA_DISABLE_11N)) {
-		struct ieee80211_supported_band *sband;
-
-		sband = local->hw.wiphy->bands[local->oper_channel->band];
-
+	    !(ifmgd->flags & IEEE80211_STA_DISABLE_11N))
 		changed |= ieee80211_config_ht_tx(sdata, elems.ht_operation,
 						  bssid, true);
-	}
 
-	/* Note: country IE parsing is done for us by cfg80211 */
-	if (elems.country_elem) {
-		/* TODO: IBSS also needs this */
-		if (elems.pwr_constr_elem)
-			ieee80211_handle_pwr_constr(sdata,
-				le16_to_cpu(mgmt->u.probe_resp.capab_info),
-				elems.pwr_constr_elem,
-				elems.pwr_constr_elem_len);
-	}
+	if (elems.country_elem && elems.pwr_constr_elem &&
+	    mgmt->u.probe_resp.capab_info &
+				cpu_to_le16(WLAN_CAPABILITY_SPECTRUM_MGMT))
+		ieee80211_handle_pwr_constr(sdata, chan,
+					    elems.country_elem,
+					    elems.country_elem_len,
+					    elems.pwr_constr_elem);
 
 	ieee80211_bss_info_change_notify(sdata, changed);
 }
@@ -2635,7 +2724,7 @@ static void ieee80211_sta_connection_lost(struct ieee80211_sub_if_data *sdata,
 {
 	struct ieee80211_local *local = sdata->local;
 	struct ieee80211_if_managed *ifmgd = &sdata->u.mgd;
-	u8 frame_buf[DEAUTH_DISASSOC_LEN];
+	u8 frame_buf[IEEE80211_DEAUTH_FRAME_LEN];
 
 	ieee80211_set_disassoc(sdata, IEEE80211_STYPE_DEAUTH, reason,
 			       false, frame_buf);
@@ -2645,7 +2734,7 @@ static void ieee80211_sta_connection_lost(struct ieee80211_sub_if_data *sdata,
 	 * must be outside lock due to cfg80211,
 	 * but that's not a problem.
 	 */
-	cfg80211_send_deauth(sdata->dev, frame_buf, DEAUTH_DISASSOC_LEN);
+	cfg80211_send_deauth(sdata->dev, frame_buf, IEEE80211_DEAUTH_FRAME_LEN);
 
 	mutex_lock(&local->mtx);
 	ieee80211_recalc_idle(local);
@@ -2683,13 +2772,23 @@ static int ieee80211_probe_auth(struct ieee80211_sub_if_data *sdata)
 	drv_mgd_prepare_tx(local, sdata);
 
 	if (auth_data->bss->proberesp_ies) {
+		u16 trans = 1;
+		u16 status = 0;
+
 		sdata_info(sdata, "send auth to %pM (try %d/%d)\n",
 			   auth_data->bss->bssid, auth_data->tries,
 			   IEEE80211_AUTH_MAX_TRIES);
 
 		auth_data->expected_transaction = 2;
-		ieee80211_send_auth(sdata, 1, auth_data->algorithm,
-				    auth_data->ie, auth_data->ie_len,
+
+		if (auth_data->algorithm == WLAN_AUTH_SAE) {
+			trans = auth_data->sae_trans;
+			status = auth_data->sae_status;
+			auth_data->expected_transaction = trans;
+		}
+
+		ieee80211_send_auth(sdata, trans, auth_data->algorithm, status,
+				    auth_data->data, auth_data->data_len,
 				    auth_data->bss->bssid,
 				    auth_data->bss->bssid, NULL, 0, 0);
 	} else {
@@ -2708,7 +2807,7 @@ static int ieee80211_probe_auth(struct ieee80211_sub_if_data *sdata)
 		 */
 		ieee80211_send_probe_req(sdata, NULL, ssidie + 2, ssidie[1],
 					 NULL, 0, (u32) -1, true, false,
-					 auth_data->bss->channel);
+					 auth_data->bss->channel, false);
 	}
 
 	auth_data->timeout = jiffies + IEEE80211_AUTH_TIMEOUT;
@@ -2929,6 +3028,7 @@ void ieee80211_sta_quiesce(struct ieee80211_sub_if_data *sdata)
 
 	cancel_work_sync(&ifmgd->monitor_work);
 	cancel_work_sync(&ifmgd->beacon_connection_loss_work);
+	cancel_work_sync(&ifmgd->csa_connection_drop_work);
 	if (del_timer_sync(&ifmgd->timer))
 		set_bit(TMR_RUNNING_TIMER, &ifmgd->timers_running);
 
@@ -2985,6 +3085,8 @@ void ieee80211_sta_setup_sdata(struct ieee80211_sub_if_data *sdata)
 	INIT_WORK(&ifmgd->chswitch_work, ieee80211_chswitch_work);
 	INIT_WORK(&ifmgd->beacon_connection_loss_work,
 		  ieee80211_beacon_connection_loss_work);
+	INIT_WORK(&ifmgd->csa_connection_drop_work,
+		  ieee80211_csa_connection_drop_work);
 	INIT_WORK(&ifmgd->request_smps_work, ieee80211_request_smps_work);
 	setup_timer(&ifmgd->timer, ieee80211_sta_timer,
 		    (unsigned long) sdata);
@@ -3076,39 +3178,57 @@ static int ieee80211_prep_channel(struct ieee80211_sub_if_data *sdata,
 				   ht_cfreq, ht_oper->primary_chan,
 				   cbss->channel->band);
 			ht_oper = NULL;
+		} else {
+			channel_type = NL80211_CHAN_HT20;
 		}
 	}
 
-	if (ht_oper) {
+	if (ht_oper && sband->ht_cap.cap & IEEE80211_HT_CAP_SUP_WIDTH_20_40) {
+		/*
+		 * cfg80211 already verified that the channel itself can
+		 * be used, but it didn't check that we can do the right
+		 * HT type, so do that here as well. If HT40 isn't allowed
+		 * on this channel, disable 40 MHz operation.
+		 */
+		const u8 *ht_cap_ie;
+		const struct ieee80211_ht_cap *ht_cap;
+		u8 chains = 1;
+
 		channel_type = NL80211_CHAN_HT20;
 
-		if (sband->ht_cap.cap & IEEE80211_HT_CAP_SUP_WIDTH_20_40) {
-			switch (ht_oper->ht_param &
-					IEEE80211_HT_PARAM_CHA_SEC_OFFSET) {
-			case IEEE80211_HT_PARAM_CHA_SEC_ABOVE:
+		switch (ht_oper->ht_param & IEEE80211_HT_PARAM_CHA_SEC_OFFSET) {
+		case IEEE80211_HT_PARAM_CHA_SEC_ABOVE:
+			if (cbss->channel->flags & IEEE80211_CHAN_NO_HT40PLUS)
+				ifmgd->flags |= IEEE80211_STA_DISABLE_40MHZ;
+			else
 				channel_type = NL80211_CHAN_HT40PLUS;
-				break;
-			case IEEE80211_HT_PARAM_CHA_SEC_BELOW:
+			break;
+		case IEEE80211_HT_PARAM_CHA_SEC_BELOW:
+			if (cbss->channel->flags & IEEE80211_CHAN_NO_HT40MINUS)
+				ifmgd->flags |= IEEE80211_STA_DISABLE_40MHZ;
+			else
 				channel_type = NL80211_CHAN_HT40MINUS;
-				break;
-			}
+			break;
 		}
+
+		ht_cap_ie = cfg80211_find_ie(WLAN_EID_HT_CAPABILITY,
+					     cbss->information_elements,
+					     cbss->len_information_elements);
+		if (ht_cap_ie && ht_cap_ie[1] >= sizeof(*ht_cap)) {
+			ht_cap = (void *)(ht_cap_ie + 2);
+			chains = ieee80211_mcs_to_chains(&ht_cap->mcs);
+		}
+		sdata->needed_rx_chains = min(chains, local->rx_chains);
+	} else {
+		sdata->needed_rx_chains = 1;
 	}
 
-	if (!ieee80211_set_channel_type(local, sdata, channel_type)) {
-		/* can only fail due to HT40+/- mismatch */
-		channel_type = NL80211_CHAN_HT20;
-		sdata_info(sdata,
-			   "disabling 40 MHz due to multi-vif mismatch\n");
-		ifmgd->flags |= IEEE80211_STA_DISABLE_40MHZ;
-		WARN_ON(!ieee80211_set_channel_type(local, sdata,
-						    channel_type));
-	}
+	/* will change later if needed */
+	sdata->smps_mode = IEEE80211_SMPS_OFF;
 
-	local->oper_channel = cbss->channel;
-	ieee80211_hw_config(local, IEEE80211_CONF_CHANGE_CHANNEL);
-
-	return 0;
+	ieee80211_vif_release_channel(sdata);
+	return ieee80211_vif_use_channel(sdata, cbss->channel, channel_type,
+					 IEEE80211_CHANCTX_SHARED);
 }
 
 static int ieee80211_prep_connection(struct ieee80211_sub_if_data *sdata,
@@ -3178,7 +3298,7 @@ static int ieee80211_prep_connection(struct ieee80211_sub_if_data *sdata,
 		sdata->vif.bss_conf.basic_rates = basic_rates;
 
 		/* cf. IEEE 802.11 9.2.12 */
-		if (local->oper_channel->band == IEEE80211_BAND_2GHZ &&
+		if (cbss->channel->band == IEEE80211_BAND_2GHZ &&
 		    have_higher_than_11mbit)
 			sdata->flags |= IEEE80211_SDATA_OPERATING_GMODE;
 		else
@@ -3240,19 +3360,33 @@ int ieee80211_mgd_auth(struct ieee80211_sub_if_data *sdata,
 	case NL80211_AUTHTYPE_NETWORK_EAP:
 		auth_alg = WLAN_AUTH_LEAP;
 		break;
+	case NL80211_AUTHTYPE_SAE:
+		auth_alg = WLAN_AUTH_SAE;
+		break;
 	default:
 		return -EOPNOTSUPP;
 	}
 
-	auth_data = kzalloc(sizeof(*auth_data) + req->ie_len, GFP_KERNEL);
+	auth_data = kzalloc(sizeof(*auth_data) + req->sae_data_len +
+			    req->ie_len, GFP_KERNEL);
 	if (!auth_data)
 		return -ENOMEM;
 
 	auth_data->bss = req->bss;
 
+	if (req->sae_data_len >= 4) {
+		__le16 *pos = (__le16 *) req->sae_data;
+		auth_data->sae_trans = le16_to_cpu(pos[0]);
+		auth_data->sae_status = le16_to_cpu(pos[1]);
+		memcpy(auth_data->data, req->sae_data + 4,
+		       req->sae_data_len - 4);
+		auth_data->data_len += req->sae_data_len - 4;
+	}
+
 	if (req->ie && req->ie_len) {
-		memcpy(auth_data->ie, req->ie, req->ie_len);
-		auth_data->ie_len = req->ie_len;
+		memcpy(&auth_data->data[auth_data->data_len],
+		       req->ie, req->ie_len);
+		auth_data->data_len += req->ie_len;
 	}
 
 	if (req->key && req->key_len) {
@@ -3419,11 +3553,11 @@ int ieee80211_mgd_assoc(struct ieee80211_sub_if_data *sdata,
 
 	if (ifmgd->req_smps == IEEE80211_SMPS_AUTOMATIC) {
 		if (ifmgd->powersave)
-			ifmgd->ap_smps = IEEE80211_SMPS_DYNAMIC;
+			sdata->smps_mode = IEEE80211_SMPS_DYNAMIC;
 		else
-			ifmgd->ap_smps = IEEE80211_SMPS_OFF;
+			sdata->smps_mode = IEEE80211_SMPS_OFF;
 	} else
-		ifmgd->ap_smps = ifmgd->req_smps;
+		sdata->smps_mode = ifmgd->req_smps;
 
 	assoc_data->capability = req->bss->capability;
 	assoc_data->wmm = bss->wmm_used &&
@@ -3525,7 +3659,8 @@ int ieee80211_mgd_deauth(struct ieee80211_sub_if_data *sdata,
 			 struct cfg80211_deauth_request *req)
 {
 	struct ieee80211_if_managed *ifmgd = &sdata->u.mgd;
-	u8 frame_buf[DEAUTH_DISASSOC_LEN];
+	u8 frame_buf[IEEE80211_DEAUTH_FRAME_LEN];
+	bool tx = !req->local_state_change;
 
 	mutex_lock(&ifmgd->mtx);
 
@@ -3542,18 +3677,19 @@ int ieee80211_mgd_deauth(struct ieee80211_sub_if_data *sdata,
 	if (ifmgd->associated &&
 	    ether_addr_equal(ifmgd->associated->bssid, req->bssid)) {
 		ieee80211_set_disassoc(sdata, IEEE80211_STYPE_DEAUTH,
-				       req->reason_code, true, frame_buf);
+				       req->reason_code, tx, frame_buf);
 	} else {
 		drv_mgd_prepare_tx(sdata->local, sdata);
 		ieee80211_send_deauth_disassoc(sdata, req->bssid,
 					       IEEE80211_STYPE_DEAUTH,
-					       req->reason_code, true,
+					       req->reason_code, tx,
 					       frame_buf);
 	}
 
 	mutex_unlock(&ifmgd->mtx);
 
-	__cfg80211_send_deauth(sdata->dev, frame_buf, DEAUTH_DISASSOC_LEN);
+	__cfg80211_send_deauth(sdata->dev, frame_buf,
+			       IEEE80211_DEAUTH_FRAME_LEN);
 
 	mutex_lock(&sdata->local->mtx);
 	ieee80211_recalc_idle(sdata->local);
@@ -3567,7 +3703,7 @@ int ieee80211_mgd_disassoc(struct ieee80211_sub_if_data *sdata,
 {
 	struct ieee80211_if_managed *ifmgd = &sdata->u.mgd;
 	u8 bssid[ETH_ALEN];
-	u8 frame_buf[DEAUTH_DISASSOC_LEN];
+	u8 frame_buf[IEEE80211_DEAUTH_FRAME_LEN];
 
 	mutex_lock(&ifmgd->mtx);
 
@@ -3592,7 +3728,8 @@ int ieee80211_mgd_disassoc(struct ieee80211_sub_if_data *sdata,
 			       frame_buf);
 	mutex_unlock(&ifmgd->mtx);
 
-	__cfg80211_send_disassoc(sdata->dev, frame_buf, DEAUTH_DISASSOC_LEN);
+	__cfg80211_send_disassoc(sdata->dev, frame_buf,
+				 IEEE80211_DEAUTH_FRAME_LEN);
 
 	mutex_lock(&sdata->local->mtx);
 	ieee80211_recalc_idle(sdata->local);

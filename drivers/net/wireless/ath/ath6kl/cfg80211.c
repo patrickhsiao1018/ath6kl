@@ -301,7 +301,7 @@ static bool ath6kl_cfg80211_ready(struct ath6kl_vif *vif)
 
 static bool ath6kl_is_wpa_ie(const u8 *pos)
 {
-	return pos[0] == WLAN_EID_WPA && pos[1] >= 4 &&
+	return pos[0] == WLAN_EID_VENDOR_SPECIFIC && pos[1] >= 4 &&
 		pos[2] == 0x00 && pos[3] == 0x50 &&
 		pos[4] == 0xf2 && pos[5] == 0x01;
 }
@@ -1469,7 +1469,7 @@ static int ath6kl_cfg80211_set_power_mgmt(struct wiphy *wiphy,
 }
 
 static struct wireless_dev *ath6kl_cfg80211_add_iface(struct wiphy *wiphy,
-						      char *name,
+						      const char *name,
 						      enum nl80211_iftype type,
 						      u32 *flags,
 						      struct vif_params *params)
@@ -3570,7 +3570,7 @@ void ath6kl_cfg80211_vif_cleanup(struct ath6kl_vif *vif)
 	ar->num_vif--;
 }
 
-struct wireless_dev *ath6kl_interface_add(struct ath6kl *ar, char *name,
+struct wireless_dev *ath6kl_interface_add(struct ath6kl *ar, const char *name,
 					  enum nl80211_iftype type,
 					  u8 fw_vif_idx, u8 nw_type)
 {
@@ -3752,7 +3752,7 @@ int ath6kl_cfg80211_init(struct ath6kl *ar)
 
 	if (test_bit(ATH6KL_FW_CAPABILITY_INACTIVITY_TIMEOUT,
 		     ar->fw_capabilities))
-		ar->wiphy->features = NL80211_FEATURE_INACTIVITY_TIMER;
+		ar->wiphy->features |= NL80211_FEATURE_INACTIVITY_TIMER;
 
 	ar->wiphy->probe_resp_offload =
 		NL80211_PROBE_RESP_OFFLOAD_SUPPORT_WPS |
