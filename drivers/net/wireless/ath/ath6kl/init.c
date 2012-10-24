@@ -42,7 +42,7 @@ static const struct ath6kl_hw hw_list[] = {
 		.reserved_ram_size		= 6912,
 		.refclk_hz			= 26000000,
 		.uarttx_pin			= 8,
-		.flags				= 0,
+		.flags				= ATH6KL_HW_SDIO_CRC_ERROR_WAR,
 
 		/* hw2.0 needs override address hardcoded */
 		.app_start_override_addr	= 0x944C00,
@@ -68,7 +68,7 @@ static const struct ath6kl_hw hw_list[] = {
 		.refclk_hz			= 26000000,
 		.uarttx_pin			= 8,
 		.testscript_addr		= 0x57ef74,
-		.flags				= 0,
+		.flags				= ATH6KL_HW_SDIO_CRC_ERROR_WAR,
 
 		.fw = {
 			.dir		= AR6003_HW_2_1_1_FW_DIR,
@@ -93,7 +93,8 @@ static const struct ath6kl_hw hw_list[] = {
 		.board_addr			= 0x433900,
 		.refclk_hz			= 26000000,
 		.uarttx_pin			= 11,
-		.flags				= ATH6KL_HW_FLAG_64BIT_RATES,
+		.flags				= ATH6KL_HW_64BIT_RATES |
+						  ATH6KL_HW_AP_INACTIVITY_MINS,
 
 		.fw = {
 			.dir		= AR6004_HW_1_0_FW_DIR,
@@ -113,8 +114,8 @@ static const struct ath6kl_hw hw_list[] = {
 		.board_addr			= 0x43d400,
 		.refclk_hz			= 40000000,
 		.uarttx_pin			= 11,
-		.flags				= ATH6KL_HW_FLAG_64BIT_RATES,
-
+		.flags				= ATH6KL_HW_64BIT_RATES |
+						  ATH6KL_HW_AP_INACTIVITY_MINS,
 		.fw = {
 			.dir		= AR6004_HW_1_1_FW_DIR,
 			.fw		= AR6004_HW_1_1_FIRMWARE_FILE,
@@ -133,7 +134,8 @@ static const struct ath6kl_hw hw_list[] = {
 		.board_addr			= 0x435c00,
 		.refclk_hz			= 40000000,
 		.uarttx_pin			= 11,
-		.flags				= ATH6KL_HW_FLAG_64BIT_RATES,
+		.flags				= ATH6KL_HW_64BIT_RATES |
+						  ATH6KL_HW_AP_INACTIVITY_MINS,
 
 		.fw = {
 			.dir		= AR6004_HW_1_2_FW_DIR,
@@ -152,7 +154,9 @@ static const struct ath6kl_hw hw_list[] = {
 		.board_addr			= 0x436400,
 		.refclk_hz                      = 40000000,
 		.uarttx_pin                     = 11,
-		.flags                          = ATH6KL_HW_FLAG_64BIT_RATES,
+		.flags				= ATH6KL_HW_64BIT_RATES |
+						  ATH6KL_HW_AP_INACTIVITY_MINS |
+						  ATH6KL_HW_MAP_LP_ENDPOINT,
 
 		.fw = {
 			.dir            = AR6004_HW_1_3_FW_DIR,
@@ -357,7 +361,7 @@ static int ath6kl_init_service_ep(struct ath6kl *ar)
 	if (ath6kl_connectservice(ar, &connect, "WMI DATA BK"))
 		return -EIO;
 
-	/* connect to Video service, map this to to HI PRI */
+	/* connect to Video service, map this to HI PRI */
 	connect.svc_id = WMI_DATA_VI_SVC;
 	if (ath6kl_connectservice(ar, &connect, "WMI DATA VI"))
 		return -EIO;
@@ -1427,8 +1431,7 @@ static int ath6kl_init_upload(struct ath6kl *ar)
 		return status;
 
 	/* WAR to avoid SDIO CRC err */
-	if (ar->version.target_ver == AR6003_HW_2_0_VERSION ||
-	    ar->version.target_ver == AR6003_HW_2_1_1_VERSION) {
+	if (ar->hw.flags & ATH6KL_HW_SDIO_CRC_ERROR_WAR) {
 		ath6kl_err("temporary war to avoid sdio crc error\n");
 
 		param = 0x28;

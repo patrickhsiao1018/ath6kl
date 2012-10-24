@@ -185,9 +185,10 @@ static int ath6kl_usb_alloc_pipe_resources(struct ath6kl_usb_pipe *pipe,
 	for (i = 0; i < urb_cnt; i++) {
 		urb_context = kzalloc(sizeof(struct ath6kl_urb_context),
 				      GFP_KERNEL);
-		if (urb_context == NULL)
-			/* FIXME: set status to -ENOMEM */
-			break;
+		if (urb_context == NULL) {
+			status = -ENOMEM;
+			goto fail_alloc_pipe_resources;
+		}
 
 		urb_context->pipe = pipe;
 
@@ -204,6 +205,7 @@ static int ath6kl_usb_alloc_pipe_resources(struct ath6kl_usb_pipe *pipe,
 		   pipe->logical_pipe_num, pipe->usb_pipe_handle,
 		   pipe->urb_alloc);
 
+fail_alloc_pipe_resources:
 	return status;
 }
 
@@ -803,7 +805,11 @@ static int ath6kl_usb_map_service_pipe(struct ath6kl *ar, u16 svc_id,
 		*dl_pipe = ATH6KL_USB_PIPE_RX_DATA;
 		break;
 	case WMI_DATA_VI_SVC:
-		*ul_pipe = ATH6KL_USB_PIPE_TX_DATA_MP;
+
+		if (ar->hw.flags & ATH6KL_HW_MAP_LP_ENDPOINT)
+			*ul_pipe = ATH6KL_USB_PIPE_TX_DATA_LP;
+		else
+			*ul_pipe = ATH6KL_USB_PIPE_TX_DATA_MP;
 		/*
 		* Disable rxdata2 directly, it will be enabled
 		* if FW enable rxdata2
@@ -811,7 +817,11 @@ static int ath6kl_usb_map_service_pipe(struct ath6kl *ar, u16 svc_id,
 		*dl_pipe = ATH6KL_USB_PIPE_RX_DATA;
 		break;
 	case WMI_DATA_VO_SVC:
-		*ul_pipe = ATH6KL_USB_PIPE_TX_DATA_HP;
+
+		if (ar->hw.flags & ATH6KL_HW_MAP_LP_ENDPOINT)
+			*ul_pipe = ATH6KL_USB_PIPE_TX_DATA_LP;
+		else
+			*ul_pipe = ATH6KL_USB_PIPE_TX_DATA_MP;
 		/*
 		* Disable rxdata2 directly, it will be enabled
 		* if FW enable rxdata2
