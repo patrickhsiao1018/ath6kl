@@ -1096,6 +1096,7 @@ static struct usb_device_id rt2800usb_device_table[] = {
 	{ USB_DEVICE(0x177f, 0x0153) },
 	{ USB_DEVICE(0x177f, 0x0302) },
 	{ USB_DEVICE(0x177f, 0x0313) },
+	{ USB_DEVICE(0x177f, 0x0323) },
 	/* U-Media */
 	{ USB_DEVICE(0x157e, 0x300e) },
 	{ USB_DEVICE(0x157e, 0x3013) },
@@ -1282,6 +1283,7 @@ static struct usb_driver rt2800usb_driver = {
 	.disconnect	= rt2x00usb_disconnect,
 	.suspend	= rt2x00usb_suspend,
 	.resume		= rt2x00usb_resume,
+	.reset_resume	= rt2x00usb_resume,
 	.disable_hub_initiated_lpm = 1,
 };
 

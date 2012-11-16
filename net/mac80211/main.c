@@ -751,7 +751,7 @@ int ieee80211_register_hw(struct ieee80211_hw *hw)
 			if (comb->num_different_channels > 1)
 				return -EINVAL;
 		}
-
+	} else {
 		/*
 		 * WDS is currently prohibited when channel contexts are used
 		 * because there's no clear definition of which channel WDS
@@ -920,8 +920,10 @@ int ieee80211_register_hw(struct ieee80211_hw *hw)
 				local->hw.wiphy->cipher_suites,
 				sizeof(u32) * local->hw.wiphy->n_cipher_suites,
 				GFP_KERNEL);
-			if (!suites)
-				return -ENOMEM;
+			if (!suites) {
+				result = -ENOMEM;
+				goto fail_wiphy_register;
+			}
 			for (r = 0; r < local->hw.wiphy->n_cipher_suites; r++) {
 				u32 suite = local->hw.wiphy->cipher_suites[r];
 				if (suite == WLAN_CIPHER_SUITE_WEP40 ||
