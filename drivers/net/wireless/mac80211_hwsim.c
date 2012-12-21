@@ -1347,9 +1347,14 @@ static void hw_scan_work(struct work_struct *work)
 						       hwsim->hw_scan_vif,
 						       req->ssids[i].ssid,
 						       req->ssids[i].ssid_len,
-						       req->ie, req->ie_len);
+						       req->ie_len);
 			if (!probe)
 				continue;
+
+			if (req->ie_len)
+				memcpy(skb_put(probe, req->ie_len), req->ie,
+				       req->ie_len);
+
 			local_bh_disable();
 			mac80211_hwsim_tx_frame(hwsim->hw, probe,
 						hwsim->tmp_chan);
@@ -2218,7 +2223,7 @@ static int __init init_mac80211_hwsim(void)
 				IEEE80211_VHT_CAP_RXSTBC_2 |
 				IEEE80211_VHT_CAP_RXSTBC_3 |
 				IEEE80211_VHT_CAP_RXSTBC_4 |
-				IEEE80211_VHT_CAP_MAX_A_MPDU_LENGTH_EXPONENT;
+				IEEE80211_VHT_CAP_MAX_A_MPDU_LENGTH_EXPONENT_MASK;
 			sband->vht_cap.vht_mcs.rx_mcs_map =
 				cpu_to_le16(IEEE80211_VHT_MCS_SUPPORT_0_8 << 0 |
 					    IEEE80211_VHT_MCS_SUPPORT_0_8 << 2 |

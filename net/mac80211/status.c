@@ -502,7 +502,11 @@ void ieee80211_tx_status(struct ieee80211_hw *hw, struct sk_buff *skb)
 				       IEEE80211_BAR_CTRL_TID_INFO_MASK) >>
 				      IEEE80211_BAR_CTRL_TID_INFO_SHIFT;
 
-				ieee80211_set_bar_pending(sta, tid, ssn);
+				if (local->hw.flags &
+				    IEEE80211_HW_TEARDOWN_AGGR_ON_BAR_FAIL)
+					ieee80211_stop_tx_ba_session(&sta->sta, tid);
+				else
+					ieee80211_set_bar_pending(sta, tid, ssn);
 			}
 		}
 
@@ -539,6 +543,9 @@ void ieee80211_tx_status(struct ieee80211_hw *hw, struct sk_buff *skb)
 				sta->lost_packets = 0;
 			}
 		}
+
+		if (acked)
+			sta->last_ack_signal = info->status.ack_signal;
 	}
 
 	rcu_read_unlock();

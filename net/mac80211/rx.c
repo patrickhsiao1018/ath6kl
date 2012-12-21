@@ -49,7 +49,7 @@ static struct sk_buff *remove_monitor_info(struct ieee80211_local *local,
 			/* driver bug */
 			WARN_ON(1);
 			dev_kfree_skb(skb);
-			skb = NULL;
+			return NULL;
 		}
 	}
 
@@ -109,6 +109,11 @@ ieee80211_rx_radiotap_space(struct ieee80211_local *local,
 	if (status->flag & RX_FLAG_AMPDU_DETAILS) {
 		len = ALIGN(len, 4);
 		len += 8;
+	}
+
+	if (status->flag & RX_FLAG_VHT) {
+		len = ALIGN(len, 2);
+		len += 12;
 	}
 
 	if (status->vendor_radiotap_len) {
@@ -297,6 +302,41 @@ ieee80211_add_rx_radiotap_header(struct ieee80211_local *local,
 		*pos++ = 0;
 	}
 
+	if (status->flag & RX_FLAG_VHT) {
+		u16 known = local->hw.radiotap_vht_details;
+
+		rthdr->it_present |= cpu_to_le32(1 << IEEE80211_RADIOTAP_VHT);
+		/* known field - how to handle 80+80? */
+		if (status->flag & RX_FLAG_80P80MHZ)
+			known &= ~IEEE80211_RADIOTAP_VHT_KNOWN_BANDWIDTH;
+		put_unaligned_le16(known, pos);
+		pos += 2;
+		/* flags */
+		if (status->flag & RX_FLAG_SHORT_GI)
+			*pos |= IEEE80211_RADIOTAP_VHT_FLAG_SGI;
+		pos++;
+		/* bandwidth */
+		if (status->flag & RX_FLAG_80MHZ)
+			*pos++ = 4;
+		else if (status->flag & RX_FLAG_80P80MHZ)
+			*pos++ = 0; /* marked not known above */
+		else if (status->flag & RX_FLAG_160MHZ)
+			*pos++ = 11;
+		else if (status->flag & RX_FLAG_40MHZ)
+			*pos++ = 1;
+		else /* 20 MHz */
+			*pos++ = 0;
+		/* MCS/NSS */
+		*pos = (status->rate_idx << 4) | status->vht_nss;
+		pos += 4;
+		/* coding field */
+		pos++;
+		/* group ID */
+		pos++;
+		/* partial_aid */
+		pos += 2;
+	}
+
 	if (status->vendor_radiotap_len) {
 		/* ensure 2 byte alignment for the vendor field as required */
 		if ((pos - (u8 *)rthdr) & 1)
@@ -338,9 +378,6 @@ ieee80211_rx_monitor(struct ieee80211_local *local, struct sk_buff *origskb,
 	 * the SKB because it has a bad FCS/PLCP checksum.
 	 */
 
-	/* room for the radiotap header based on driver features */
-	needed_headroom = ieee80211_rx_radiotap_space(local, status);
-
 	if (local->hw.flags & IEEE80211_HW_RX_INCLUDES_FCS)
 		present_fcs_len = FCS_LEN;
 
@@ -358,6 +395,9 @@ ieee80211_rx_monitor(struct ieee80211_local *local, struct sk_buff *origskb,
 
 		return remove_monitor_info(local, origskb);
 	}
+
+	/* room for the radiotap header based on driver features */
+	needed_headroom = ieee80211_rx_radiotap_space(local, status);
 
 	if (should_drop_frame(origskb, present_fcs_len)) {
 		/* only need to expand headroom if necessary */
@@ -2293,7 +2333,8 @@ ieee80211_rx_h_action(struct ieee80211_rx_data *rx)
 	if (len < IEEE80211_MIN_ACTION_SIZE)
 		return RX_DROP_UNUSABLE;
 
-	if (!rx->sta && mgmt->u.action.category != WLAN_CATEGORY_PUBLIC)
+	if (!rx->sta && mgmt->u.action.category != WLAN_CATEGORY_PUBLIC &&
+	    mgmt->u.action.category != WLAN_CATEGORY_SELF_PROTECTED)
 		return RX_DROP_UNUSABLE;
 
 	if (!(status->rx_flags & IEEE80211_RX_RA_MATCH))
