@@ -791,7 +791,7 @@ void ath6kl_cfg80211_connect_event(struct ath6kl_vif *vif, u16 channel,
 		ath6kl_dbg(ATH6KL_DBG_WLAN_CFG, "ad-hoc %s selected\n",
 			   nw_type & ADHOC_CREATOR ? "creator" : "joiner");
 		cfg80211_ibss_joined(vif->ndev, bssid, GFP_KERNEL);
-		cfg80211_put_bss(bss);
+		cfg80211_put_bss(ar->wiphy, bss);
 		return;
 	}
 
@@ -802,7 +802,7 @@ void ath6kl_cfg80211_connect_event(struct ath6kl_vif *vif, u16 channel,
 					assoc_req_ie, assoc_req_len,
 					assoc_resp_ie, assoc_resp_len,
 					WLAN_STATUS_SUCCESS, GFP_KERNEL);
-		cfg80211_put_bss(bss);
+		cfg80211_put_bss(ar->wiphy, bss);
 	} else if (vif->sme_state == SME_CONNECTED) {
 		/* inform roam event to cfg80211 */
 		cfg80211_roamed_bss(vif->ndev, bss, assoc_req_ie, assoc_req_len,
@@ -1798,14 +1798,14 @@ static int ath6kl_get_station(struct wiphy *wiphy, struct net_device *dev,
 
 	if (vif->target_stats.rx_byte) {
 		sinfo->rx_bytes = vif->target_stats.rx_byte;
-		sinfo->filled |= STATION_INFO_RX_BYTES;
+		sinfo->filled |= STATION_INFO_RX_BYTES64;
 		sinfo->rx_packets = vif->target_stats.rx_pkt;
 		sinfo->filled |= STATION_INFO_RX_PACKETS;
 	}
 
 	if (vif->target_stats.tx_byte) {
 		sinfo->tx_bytes = vif->target_stats.tx_byte;
-		sinfo->filled |= STATION_INFO_TX_BYTES;
+		sinfo->filled |= STATION_INFO_TX_BYTES64;
 		sinfo->tx_packets = vif->target_stats.tx_pkt;
 		sinfo->filled |= STATION_INFO_TX_PACKETS;
 	}
@@ -3490,8 +3490,8 @@ void ath6kl_cfg80211_stop_all(struct ath6kl *ar)
 		ath6kl_cfg80211_stop(vif);
 }
 
-static int ath6kl_cfg80211_reg_notify(struct wiphy *wiphy,
-				      struct regulatory_request *request)
+static void ath6kl_cfg80211_reg_notify(struct wiphy *wiphy,
+				       struct regulatory_request *request)
 {
 	struct ath6kl *ar = wiphy_priv(wiphy);
 	u32 rates[IEEE80211_NUM_BANDS];
@@ -3504,17 +3504,13 @@ static int ath6kl_cfg80211_reg_notify(struct wiphy *wiphy,
 		   request->processed ? " processed" : "",
 		   request->initiator, request->user_reg_hint_type);
 
-	/*
-	 * As firmware is not able intersect regdoms, we can only listen to
-	 * cellular hints.
-	 */
 	if (request->user_reg_hint_type != NL80211_USER_REG_HINT_CELL_BASE)
-		return -EOPNOTSUPP;
+		return;
 
 	ret = ath6kl_wmi_set_regdomain_cmd(ar->wmi, request->alpha2);
 	if (ret) {
 		ath6kl_err("failed to set regdomain: %d\n", ret);
-		return ret;
+		return;
 	}
 
 	/*
@@ -3534,10 +3530,8 @@ static int ath6kl_cfg80211_reg_notify(struct wiphy *wiphy,
 	if (ret) {
 		ath6kl_err("failed to start scan for a regdomain change: %d\n",
 			   ret);
-		return ret;
+		return;
 	}
-
-	return 0;
 }
 
 static int ath6kl_cfg80211_vif_init(struct ath6kl_vif *vif)

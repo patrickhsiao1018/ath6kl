@@ -205,6 +205,7 @@ static void prepare_frame_for_deferred_tx(struct ieee80211_sub_if_data *sdata,
 		struct sk_buff *skb)
 {
 	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
+	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *) skb->data;
 
 	skb_set_mac_header(skb, 0);
 	skb_set_network_header(skb, 0);
@@ -215,16 +216,20 @@ static void prepare_frame_for_deferred_tx(struct ieee80211_sub_if_data *sdata,
 	skb->priority = 7;
 
 	info->control.vif = &sdata->vif;
+	info->flags |= IEEE80211_TX_INTFL_NEED_TXPROCESSING;
 	ieee80211_set_qos_hdr(sdata, skb);
+	ieee80211_mps_set_frame_flags(sdata, NULL, hdr);
 }
 
 /**
- * mesh_send_path error - Sends a PERR mesh management frame
+ * mesh_path_error_tx - Sends a PERR mesh management frame
  *
+ * @ttl: allowed remaining hops
  * @target: broken destination
  * @target_sn: SN of the broken destination
  * @target_rcode: reason code for this PERR
  * @ra: node this frame is addressed to
+ * @sdata: local mesh subif
  *
  * Note: This function may be called with driver locks taken that the driver
  * also acquires in the TX path.  To avoid a deadlock we don't transmit the
@@ -246,11 +251,13 @@ int mesh_path_error_tx(u8 ttl, u8 *target, __le32 target_sn,
 		return -EAGAIN;
 
 	skb = dev_alloc_skb(local->tx_headroom +
+			    IEEE80211_ENCRYPT_HEADROOM +
+			    IEEE80211_ENCRYPT_TAILROOM +
 			    hdr_len +
 			    2 + 15 /* PERR IE */);
 	if (!skb)
 		return -1;
-	skb_reserve(skb, local->tx_headroom);
+	skb_reserve(skb, local->tx_headroom + IEEE80211_ENCRYPT_HEADROOM);
 	mgmt = (struct ieee80211_mgmt *) skb_put(skb, hdr_len);
 	memset(mgmt, 0, hdr_len);
 	mgmt->frame_control = cpu_to_le16(IEEE80211_FTYPE_MGMT |
@@ -350,6 +357,7 @@ static u32 airtime_link_metric_get(struct ieee80211_local *local,
  * @sdata: local mesh subif
  * @mgmt: mesh management frame
  * @hwmp_ie: hwmp information element (PREP or PREQ)
+ * @action: type of hwmp ie
  *
  * This function updates the path routing information to the originator and the
  * transmitter of a HWMP PREQ or PREP frame.
@@ -1074,6 +1082,10 @@ int mesh_nexthop_resolve(struct sk_buff *skb,
 	u8 *target_addr = hdr->addr3;
 	int err = 0;
 
+	/* Nulls are only sent to peers for PS and should be pre-addressed */
+	if (ieee80211_is_qos_nullfunc(hdr->frame_control))
+		return 0;
+
 	rcu_read_lock();
 	err = mesh_nexthop_lookup(skb, sdata);
 	if (!err)
@@ -1145,6 +1157,7 @@ int mesh_nexthop_lookup(struct sk_buff *skb,
 	if (next_hop) {
 		memcpy(hdr->addr1, next_hop->sta.addr, ETH_ALEN);
 		memcpy(hdr->addr2, sdata->vif.addr, ETH_ALEN);
+		ieee80211_mps_set_frame_flags(sdata, next_hop, hdr);
 		err = 0;
 	}
 
