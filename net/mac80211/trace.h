@@ -479,7 +479,7 @@ TRACE_EVENT(drv_set_tim,
 
 	TP_printk(
 		LOCAL_PR_FMT STA_PR_FMT " set:%d",
-		LOCAL_PR_ARG, STA_PR_FMT, __entry->set
+		LOCAL_PR_ARG, STA_PR_ARG, __entry->set
 	)
 );
 
@@ -1684,7 +1684,7 @@ TRACE_EVENT(api_sta_block_awake,
 
 	TP_printk(
 		LOCAL_PR_FMT STA_PR_FMT " block:%d",
-		LOCAL_PR_ARG, STA_PR_FMT, __entry->block
+		LOCAL_PR_ARG, STA_PR_ARG, __entry->block
 	)
 );
 
@@ -1782,7 +1782,7 @@ TRACE_EVENT(api_eosp,
 
 	TP_printk(
 		LOCAL_PR_FMT STA_PR_FMT,
-		LOCAL_PR_ARG, STA_PR_FMT
+		LOCAL_PR_ARG, STA_PR_ARG
 	)
 );
 
@@ -1860,6 +1860,25 @@ TRACE_EVENT(drv_set_default_unicast_key,
 
 	TP_printk(LOCAL_PR_FMT VIF_PR_FMT " key_idx:%d",
 		  LOCAL_PR_ARG, VIF_PR_ARG, __entry->key_idx)
+);
+
+TRACE_EVENT(api_radar_detected,
+	TP_PROTO(struct ieee80211_local *local),
+
+	TP_ARGS(local),
+
+	TP_STRUCT__entry(
+		LOCAL_ENTRY
+	),
+
+	TP_fast_assign(
+		LOCAL_ASSIGN;
+	),
+
+	TP_printk(
+		LOCAL_PR_FMT " radar detected",
+		LOCAL_PR_ARG
+	)
 );
 
 #ifdef CONFIG_MAC80211_MESSAGE_TRACING

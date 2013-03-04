@@ -285,7 +285,6 @@ struct sta_ampdu_mlme {
  * @t_offset: timing offset relative to this host
  * @t_offset_setpoint: reference timing offset of this sta to be used when
  * 	calculating clockdrift
- * @ch_width: peer's channel width
  * @local_pm: local link-specific power save mode
  * @peer_pm: peer-specific power save mode towards local STA
  * @nonpeer_pm: STA power save mode towards non-peer neighbors
@@ -296,9 +295,9 @@ struct sta_ampdu_mlme {
  * @sta: station information we share with the driver
  * @sta_state: duplicates information about station state (for debug)
  * @beacon_loss_count: number of times beacon loss has triggered
- * @supports_40mhz: tracks whether the station advertised 40 MHz support
- *	as we overwrite its HT parameters with the currently used value
  * @rcu_head: RCU head used for freeing this station struct
+ * @cur_max_bandwidth: maximum bandwidth to use for TX to the station,
+ *	taken from HT/VHT capabilities or VHT operating mode notification
  */
 struct sta_info {
 	/* General information, mostly static */
@@ -386,7 +385,6 @@ struct sta_info {
 	struct timer_list plink_timer;
 	s64 t_offset;
 	s64 t_offset_setpoint;
-	enum nl80211_chan_width ch_width;
 	/* mesh power save */
 	enum nl80211_mesh_power_mode local_pm;
 	enum nl80211_mesh_power_mode peer_pm;
@@ -400,10 +398,10 @@ struct sta_info {
 	} debugfs;
 #endif
 
+	enum ieee80211_sta_rx_bandwidth cur_max_bandwidth;
+
 	unsigned int lost_packets;
 	unsigned int beacon_loss_count;
-
-	bool supports_40mhz;
 
 	/* keep last! */
 	struct ieee80211_sta sta;
