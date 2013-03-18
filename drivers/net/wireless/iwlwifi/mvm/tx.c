@@ -22,7 +22,7 @@
  * USA
  *
  * The full GNU General Public License is included in this distribution
- * in the file called LICENSE.GPL.
+ * in the file called COPYING.
  *
  * Contact Information:
  *  Intel Linux Wireless <ilw@linux.intel.com>
@@ -607,12 +607,8 @@ static void iwl_mvm_rx_tx_cmd_single(struct iwl_mvm *mvm,
 
 		/* Single frame failure in an AMPDU queue => send BAR */
 		if (txq_id >= IWL_FIRST_AMPDU_QUEUE &&
-		    !(info->flags & IEEE80211_TX_STAT_ACK)) {
-			/* there must be only one skb in the skb_list */
-			WARN_ON_ONCE(skb_freed > 1 ||
-				     !skb_queue_empty(&skbs));
+		    !(info->flags & IEEE80211_TX_STAT_ACK))
 			info->flags |= IEEE80211_TX_STAT_AMPDU_NO_BACK;
-		}
 
 		/* W/A FW bug: seq_ctl is wrong when the queue is flushed */
 		if (status == TX_STATUS_FAIL_FIFO_FLUSHED) {
@@ -641,7 +637,7 @@ static void iwl_mvm_rx_tx_cmd_single(struct iwl_mvm *mvm,
 		next_reclaimed = ssn;
 	} else {
 		/* The next packet to be reclaimed is the one after this one */
-		next_reclaimed = SEQ_TO_SN(seq_ctl + 0x10);
+		next_reclaimed = IEEE80211_SEQ_TO_SN(seq_ctl + 0x10);
 	}
 
 	IWL_DEBUG_TX_REPLY(mvm,
