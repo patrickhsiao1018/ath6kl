@@ -728,7 +728,6 @@ struct mwifiex_adapter {
 	u16 cmd_wait_q_required;
 	struct mwifiex_wait_queue cmd_wait_q;
 	u8 scan_wait_q_woken;
-	struct cmd_ctrl_node *cmd_queued;
 	spinlock_t queue_lock;		/* lock for tx queues */
 	struct completion fw_load;
 	u8 country_code[IEEE80211_COUNTRY_STRING_LEN];
@@ -913,12 +912,20 @@ int mwifiex_set_secure_params(struct mwifiex_private *priv,
 void mwifiex_set_ht_params(struct mwifiex_private *priv,
 			   struct mwifiex_uap_bss_param *bss_cfg,
 			   struct cfg80211_ap_settings *params);
+void mwifiex_set_vht_params(struct mwifiex_private *priv,
+			    struct mwifiex_uap_bss_param *bss_cfg,
+			    struct cfg80211_ap_settings *params);
 void mwifiex_set_uap_rates(struct mwifiex_uap_bss_param *bss_cfg,
 			   struct cfg80211_ap_settings *params);
+void mwifiex_set_vht_width(struct mwifiex_private *priv,
+			   enum nl80211_chan_width width,
+			   bool ap_11ac_disable);
 void
 mwifiex_set_wmm_params(struct mwifiex_private *priv,
 		       struct mwifiex_uap_bss_param *bss_cfg,
 		       struct cfg80211_ap_settings *params);
+void mwifiex_set_ba_params(struct mwifiex_private *priv);
+void mwifiex_set_11ac_ba_params(struct mwifiex_private *priv);
 
 /*
  * This function checks if the queuing is RA based or not.
@@ -1023,7 +1030,8 @@ int mwifiex_request_set_multicast_list(struct mwifiex_private *priv,
 			struct mwifiex_multicast_list *mcast_list);
 int mwifiex_copy_mcast_addr(struct mwifiex_multicast_list *mlist,
 			    struct net_device *dev);
-int mwifiex_wait_queue_complete(struct mwifiex_adapter *adapter);
+int mwifiex_wait_queue_complete(struct mwifiex_adapter *adapter,
+				struct cmd_ctrl_node *cmd_queued);
 int mwifiex_bss_start(struct mwifiex_private *priv, struct cfg80211_bss *bss,
 		      struct cfg80211_ssid *req_ssid);
 int mwifiex_cancel_hs(struct mwifiex_private *priv, int cmd_type);
